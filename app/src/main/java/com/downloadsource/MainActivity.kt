@@ -198,7 +198,7 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
 
     if (showAddDialog) {
         AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads, speed ->
-            DownloadManager.add(ctx, url, name, threads, speed, File(DirStore.resolveDownloadDir(ctx).absolutePath))
+            DownloadManager.add(ctx, url, name, threads, speed, h, File(DirStore.resolveDownloadDir(ctx).absolutePath))
             showAddDialog = false
         }
     }

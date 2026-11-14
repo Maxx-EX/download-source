@@ -30,18 +30,16 @@ object DownloadManager {
         _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
 
-    fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, dir: File) {
+    fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, dir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
-        val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb)
+        val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
         _tasks.value = _tasks.value + task
         TaskStore.save(context, _tasks.value)
         
         scope.launch {
             try {
-                // 拦截并尝试解析网盘链接
                 val shareInfo = NetDiskParser.detect(url)
                 val parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
-                    // 把自动识别出来的提取码传进去
                     DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
                 } else url
                 
@@ -68,7 +66,7 @@ object DownloadManager {
         jobs[id] = scope.launch {
             try {
                 val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
-                val out = segmenter.download(t.url, dir, t.fileName, t.threads, t.speedLimitKb) { d, total, speed ->
+                val out = segmenter.download(t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
                     update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }

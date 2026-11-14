@@ -7,6 +7,7 @@ import android.media.MediaMuxer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -15,10 +16,12 @@ import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
 class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()) {
-    suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, speedLimitKb: Long, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
-        if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(url, targetDir, fileName, parts, onTick)
+    suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, speedLimitKb: Long, customHeaders: Map<String, String>, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+        val headers = Headers.Builder().apply { customHeaders.forEach { (k, v) -> add(k, v) } }.build()
+        
+        if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(url, targetDir, fileName, parts, headers, onTick)
 
-        val headReq = Request.Builder().url(url).head().build()
+        val headReq = Request.Builder().url(url).headers(headers).head().build()
         val meta = withContext(Dispatchers.IO) {
             client.newCall(headReq).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
@@ -47,7 +50,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
             (0 until n).map { i ->
                 async(Dispatchers.IO) {
                     val start = i * total / n; val end = if (i == n - 1) total - 1 else (i + 1) * total / n - 1
-                    retryDownloadRange(url, start, end, File(tmpDir, "$fileName.part$i"), downloaded, speedLimitKb)
+                    retryDownloadRange(url, start, end, File(tmpDir, "$fileName.part$i"), downloaded, speedLimitKb, headers)
                 }
             }.awaitAll()
             ticker.cancel()
@@ -61,21 +64,21 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         } catch (e: Exception) { ticker.cancel(); throw e }
     }
 
-    private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long) {
+    private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers) {
         var retries = 3
         while (retries > 0) {
-            try { downloadRange(url, start, end, file, downloaded, speedLimitKb); return } 
+            try { downloadRange(url, start, end, file, downloaded, speedLimitKb, headers); return } 
             catch (e: Exception) { retries--; if (retries == 0) throw e; delay(1500) }
         }
     }
 
-    private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long) {
+    private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers) {
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
         if (realStart > end) { downloaded.addAndGet(existing); return }
         if (existing > 0 && downloaded.get() == 0L) downloaded.addAndGet(existing)
         
-        val req = Request.Builder().url(url).header("Range", "bytes=$realStart-$end").build()
+        val req = Request.Builder().url(url).headers(headers).header("Range", "bytes=$realStart-$end").build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful && resp.code != 206) error("分片失败 HTTP ${resp.code}")
             RandomAccessFile(file, "rw").use { raf ->
@@ -92,7 +95,6 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                         downloaded.addAndGet(r.toLong())
                         bytesSinceStart += r
 
-                        // 限速逻辑
                         if (speedLimitKb > 0) {
                             val speedLimitBytes = speedLimitKb * 1024
                             val expectedElapsed = (bytesSinceStart * 1000) / speedLimitBytes
@@ -105,7 +107,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         }
     }
 
-    private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+    private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, headers: Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         val tsUrls = extractTsUrls(url, mutableSetOf())
         if (tsUrls.isEmpty()) error("解析不到有效视频流")
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
@@ -118,7 +120,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val partFile = File(tmpDir, "$index.ts")
-                    if (!partFile.exists()) client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
+                    if (!partFile.exists()) client.newCall(Request.Builder().url(tsUrl).headers(headers).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
                     downloaded.incrementAndGet()
                 }
             }

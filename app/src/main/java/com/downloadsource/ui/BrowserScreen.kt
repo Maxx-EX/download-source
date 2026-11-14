@@ -258,7 +258,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
 
     if (showDownloadDialog) {
         AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed ->
-            DownloadManager.add(ctx, url, name, threads, speed, DirStore.resolveDownloadDir(ctx))
+            DownloadManager.add(ctx, url, name, threads, speed, emptyMap(), DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }
     }

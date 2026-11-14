@@ -10,7 +10,8 @@ data class DownloadTask(
     val fileName: String,
     val dirPath: String = "",
     val threads: Int = 8,
-    val speedLimitKb: Long = 0L, // 0为不限速
+    val speedLimitKb: Long = 0L,
+    val headers: Map<String, String> = emptyMap(), // 新增：自定义请求头防 403
     val totalBytes: Long = 0L,
     val downloadedBytes: Long = 0L,
     val speed: Long = 0L,
