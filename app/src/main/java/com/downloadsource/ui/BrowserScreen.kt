@@ -6,12 +6,13 @@ import android.content.Intent
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -40,6 +41,8 @@ import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
+import com.downloadsource.web.WebInterceptor
+import kotlinx.coroutines.launch
 import java.io.File
 import java.net.URLEncoder
 
@@ -56,6 +59,7 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
+    val scope = rememberCoroutineScope()
     
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
@@ -64,12 +68,23 @@ fun BrowserScreen(
     
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
+    var pendingFileName by remember { mutableStateOf<String?>(null) } // 接收 JS 传来的文件名
     var showSniffList by remember { mutableStateOf(false) }
     var showHistoryList by remember { mutableStateOf(false) }
     
-    // 响应外部长按悬浮球的指令
+    val webInterceptor = remember { WebInterceptor() }
+
     LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
     LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
+
+    // 监听 JS 拦截到的数据
+    LaunchedEffect(Unit) {
+        webInterceptor.intercepted.collect { data ->
+            pendingDownloadUrl = data.url
+            pendingFileName = data.fileName
+            showDownloadDialog = true
+        }
+    }
 
     val doSearch = {
         val q = urlInput.trim()
@@ -122,20 +137,23 @@ fun BrowserScreen(
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         
-                        // 核心反爬：伪装成真实的 Chrome 手机版
+                        // 注册 JS 桥接
+                        addJavascriptInterface(webInterceptor, "AndroidBridge")
+                        
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
-                        // 允许第三方 Cookie
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         
                         webViewClient = object : SafeWebViewClient(
-                            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
+                            onDownloadRequest = { url -> 
+                                pendingDownloadUrl = url
+                                pendingFileName = null // 原生下载清空 JS 传来的文件名
+                                showDownloadDialog = true 
+                            },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                 val url = request.url.toString()
-                                // 放行验证码相关资源，防止触发循环拦截
-                                if (url.contains("captcha") || url.contains("verify") || url.contains("geetest")) return null
-                                
+                                if (url.contains("captcha") || url.contains("verify")) return null
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
                                     if (!sniffedUrls.contains(url) && sniffedUrls.size < 50) sniffedUrls.add(url)
@@ -146,8 +164,20 @@ fun BrowserScreen(
                                 super.onPageStarted(view, url, favicon)
                                 if (url != null) { urlInput = url; currentUrl = url; BrowserHistoryStore.saveSession(ctx, url) }
                             }
+                            // 在页面加载完成后注入终极拦截脚本
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                view?.evaluateJavascript(webInterceptor.injectionScript, null)
+                            }
                         }
-                        setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; showDownloadDialog = true }
+                        
+                        // 原生的 DownloadListener 依然保留，作为双保险
+                        setDownloadListener { url, _, contentDisposition, mimetype, _ -> 
+                            pendingDownloadUrl = url
+                            pendingFileName = null
+                            showDownloadDialog = true 
+                        }
+                        
                         loadUrl(currentUrl)
                         webView = this
                     }
@@ -169,7 +199,7 @@ fun BrowserScreen(
                 Text("已抓取资源 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                 LazyColumn {
                     items(sniffedUrls) { url ->
-                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
+                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
                             Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
                         }
                     }
@@ -198,7 +228,11 @@ fun BrowserScreen(
     }
 
     if (showDownloadDialog) {
-        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
+        AddTaskDialog(
+            initialUrl = pendingDownloadUrl, 
+            initialName = pendingFileName ?: "", // 将 JS 解析出的文件名传入弹窗
+            onDismiss = { showDownloadDialog = false }
+        ) { url, name, threads, speed, headers ->
             DownloadManager.add(ctx, url, name, threads, speed, headers, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }

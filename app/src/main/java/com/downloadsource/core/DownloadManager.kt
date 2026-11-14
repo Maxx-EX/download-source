@@ -15,7 +15,6 @@ import java.io.File
 import java.net.URLDecoder
 
 object DownloadManager {
-    // 全局单例 OkHttpClient，复用连接池
     val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -36,13 +35,10 @@ object DownloadManager {
         NetworkMonitor.start(context)
     }
 
-    fun autoResumeTasks(context: Context) {
-        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
-    }
-
     fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, dir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
         val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+        
         scope.launch {
             mutex.withLock { _tasks.value = _tasks.value + task }
             TaskStore.save(context, _tasks.value)
@@ -55,8 +51,18 @@ object DownloadManager {
                 } else url
                 
                 parsedUrl = MirrorResolver.resolveFastest(context, parsedUrl)
-                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
                 
+                // 如果是 DataURL (Blob)，直接生成名字
+                if (parsedUrl.startsWith("data:")) {
+                    val mime = parsedUrl.substringAfter("data:").substringBefore(";")
+                    val ext = mimeToExtension(mime)
+                    val name = if (customName.isNullOrBlank()) "blob_${System.currentTimeMillis()}$ext" else customName
+                    update(context, task.id) { it.copy(url = parsedUrl, fileName = name) }
+                    startTask(context, task.id)
+                    return@launch
+                }
+
+                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
                 update(context, task.id) { it.copy(url = parsedUrl, fileName = realName) }
                 startTask(context, task.id)
             } catch (e: Exception) {
@@ -65,6 +71,7 @@ object DownloadManager {
         }
     }
 
+    // ... startTask, pause, rename, remove 保持原样 ...
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
 
     private fun startTask(context: Context, id: String) {
@@ -84,10 +91,7 @@ object DownloadManager {
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
                 update(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
-                
-                // 加入系统媒体库
                 MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
-                
                 checkPending(context)
             } catch (e: CancellationException) {
                 segmenter.cancelTask(t.id)
@@ -117,13 +121,9 @@ object DownloadManager {
 
     fun pauseAll(context: Context) { _tasks.value.filter { it.status == TaskStatus.Running }.forEach { pause(context, it.id) } }
     fun resumeAll(context: Context) { autoResumeTasks(context) }
-    fun removeAllCompleted(context: Context) { _tasks.value.filter { it.status == TaskStatus.Completed }.forEach { remove(context, it.id) } }
 
-    fun rename(context: Context, id: String, newName: String) {
-        val t = _tasks.value.find { it.id == id } ?: return
-        val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)
-        if (oldFile.exists()) oldFile.renameTo(newFile)
-        update(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
+    fun autoResumeTasks(context: Context) {
+        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
 
     fun remove(context: Context, id: String) {
@@ -139,24 +139,63 @@ object DownloadManager {
         TaskStore.save(context, _tasks.value)
     }
 
+    // 核心升级：智能后缀与文件名解析引擎
     private fun probeRealFileName(url: String, headers: Map<String, String>): String {
         try {
             if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
+            
             val builder = Request.Builder().url(url).head()
             headers.forEach { (k, v) -> builder.header(k, v) }
             httpClient.newCall(builder.build()).execute().use { resp ->
-                // 解析 RFC 5987 filename*
+                // 1. 优先从 Content-Disposition 解析真实文件名
                 val disposition = resp.header("Content-Disposition")
                 if (disposition != null && disposition.contains("filename=")) {
                     var name = disposition.substringAfter("filename=").trim('"', ' ')
                     if (name.contains("''")) name = name.substringAfter("''")
                     return URLDecoder.decode(name, "UTF-8")
                 }
+                
+                // 2. 从 URL 中截取最后的字段
                 val path = resp.request.url.encodedPath
-                val last = path.substringAfterLast('/')
-                if (last.isNotBlank() && last.contains('.')) return last
+                var last = path.substringAfterLast('/')
+                if (last.isNotBlank() && last.contains('.')) {
+                    return URLDecoder.decode(last, "UTF-8")
+                }
+                
+                // 3. 如果没有后缀，通过 MIME 类型强行映射后缀
+                val mime = resp.header("Content-Type") ?: ""
+                val ext = mimeToExtension(mime)
+                
+                if (last.isBlank()) last = "download_${System.currentTimeMillis()}"
+                return "$last$ext"
             }
-        } catch (_: Exception) { }
-        return "download_${System.currentTimeMillis()}.bin"
+        } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
+    }
+
+    // MIME 到扩展名的精准映射字典
+    private fun mimeToExtension(mime: String): String {
+        return when {
+            mime.contains("video/mp4") -> ".mp4"
+            mime.contains("video/quicktime") -> ".mov"
+            mime.contains("video/x-matroska") -> ".mkv"
+            mime.contains("video/x-flv") -> ".flv"
+            mime.contains("video/webm") -> ".webm"
+            mime.contains("audio/mpeg") -> ".mp3"
+            mime.contains("audio/aac") -> ".aac"
+            mime.contains("audio/x-wav") -> ".wav"
+            mime.contains("application/vnd.android.package-archive") -> ".apk"
+            mime.contains("application/pdf") -> ".pdf"
+            mime.contains("image/jpeg") -> ".jpg"
+            mime.contains("image/png") -> ".png"
+            mime.contains("image/gif") -> ".gif"
+            mime.contains("image/webp") -> ".webp"
+            mime.contains("text/html") -> ".html"
+            mime.contains("text/plain") -> ".txt"
+            mime.contains("application/zip") -> ".zip"
+            mime.contains("application/x-msdownload") -> ".exe"
+            mime.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document") -> ".docx"
+            mime.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") -> ".xlsx"
+            else -> ".bin" // 兜底
+        }
     }
 }

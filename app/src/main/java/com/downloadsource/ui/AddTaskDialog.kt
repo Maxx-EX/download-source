@@ -24,12 +24,14 @@ import androidx.compose.ui.window.Dialog
 @Composable
 fun AddTaskDialog(
     initialUrl: String = "",
+    initialName: String = "",
     onDismiss: () -> Unit,
     onConfirm: (url: String, name: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>) -> Unit,
 ) {
     val ctx = LocalContext.current
     var url by remember { mutableStateOf(if (initialUrl.isNotBlank()) initialUrl else getClipboardUrl(ctx) ?: "") }
-    var name by remember { mutableStateOf("") }
+    // 接收 JS 传来的文件名
+    var name by remember { mutableStateOf(initialName) }
     var threads by remember { mutableFloatStateOf(8f) }
     var speedLimit by remember { mutableFloatStateOf(0f) }
     var referer by remember { mutableStateOf("") }
@@ -65,7 +67,6 @@ fun AddTaskDialog(
                 Slider(value = speedLimit, onValueChange = { speedLimit = it }, valueRange = 0f..2048f, steps = 63)
             }
 
-            // 高级选项 (防 403 防盗链)
             Row(Modifier.fillMaxWidth().clickable { showAdvanced = !showAdvanced }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text("高级选项 (防403防盗链)", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 Icon(Icons.Default.ExpandMore, null, tint = palette.onSurfaceDim, modifier = Modifier.size(16.dp))
