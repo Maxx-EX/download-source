@@ -19,7 +19,6 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class Segmenter {
-    // 引入 HTTP/2、连接复用池，并支持取消
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -28,7 +27,6 @@ class Segmenter {
         .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
         .build()
 
-    // 记录所有活跃的请求 Call，用于瞬间中断下载
     private val activeCalls = ConcurrentHashMap<String, Call>()
 
     fun cancelTask(taskId: String) {
@@ -37,13 +35,8 @@ class Segmenter {
     }
 
     suspend fun download(
-        taskId: String,
-        url: String,
-        targetDir: File,
-        fileName: String,
-        parts: Int,
-        speedLimitKb: Long,
-        customHeaders: Map<String, String>,
+        taskId: String, url: String, targetDir: File, fileName: String,
+        parts: Int, speedLimitKb: Long, customHeaders: Map<String, String>,
         onTick: (Long, Long, Long) -> Unit
     ): File = coroutineScope {
         val headers = Headers.Builder().apply { customHeaders.forEach { (k, v) -> add(k, v) } }.build()
@@ -52,7 +45,6 @@ class Segmenter {
             return@coroutineScope downloadM3u8(taskId, url, targetDir, fileName, parts, headers, onTick)
         }
 
-        // 获取文件信息
         val headReq = Request.Builder().url(url).headers(headers).head().build()
         val call = client.newCall(headReq)
         activeCalls[taskId] = call
@@ -60,11 +52,7 @@ class Segmenter {
         val meta = withContext(Dispatchers.IO) {
             try {
                 call.execute().use { resp ->
-                    if (!resp.isSuccessful) throw when(resp.code) {
-                        403 -> Exception("403 拒绝访问，请配置 Referer/UA")
-                        404 -> Exception("404 文件不存在")
-                        else -> Exception("HTTP ${resp.code}")
-                    }
+                    if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
                     Pair(resp.header("Content-Length")?.toLongOrNull() ?: -1L, resp.header("Accept-Ranges")?.contains("bytes", true) == true)
                 }
             } finally { activeCalls.remove(taskId) }
@@ -73,14 +61,12 @@ class Segmenter {
         val total = meta.first
         if (total <= 0) error("获取文件大小失败")
         
-        // 智能线程规划
         var n = if (meta.second && total > 4L shl 20) parts.coerceAtMost(16) else 1
-        if (total < 2L shl 20) n = 1 // < 2MB 强制单线程
+        if (total < 2L shl 20) n = 1
 
         val tmpDir = File(targetDir, ".${fileName}.parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
 
-        // 进度轮询
         var lastTick = System.currentTimeMillis(); var lastBytes = 0L
         val ticker = launch(Dispatchers.Default) {
             while (isActive) {
@@ -102,15 +88,17 @@ class Segmenter {
             }.awaitAll()
             ticker.cancel()
             
-            // 合并前校验分片大小
             var actualSize = 0L
             for (i in 0 until n) actualSize += File(tmpDir, "$fileName.part$i").length()
-            if (actualSize != total) throw Exception("下载大小不匹配，校验失败")
+            if (actualSize != total) throw Exception("下载大小不匹配，文件可能损坏")
 
             val partPaths = (0 until n).map { File(tmpDir, "$fileName.part$it").absolutePath }.toTypedArray()
             val out = File(targetDir, fileName)
+            
+            // 降级：ZeroCore 内部封装了判断，这里无需 catch
             ZeroCore.fallocate(out.absolutePath, total)
-            if (!ZeroCore.mergeFiles(partPaths, out.absolutePath)) error("合并失败")
+            if (!ZeroCore.mergeFiles(partPaths, out.absolutePath)) error("合并文件失败")
+            
             tmpDir.deleteRecursively()
             onTick(total, total, 0)
             out
@@ -120,10 +108,13 @@ class Segmenter {
         }
     }
 
-    private suspend fun retryDownloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers) {
+    private suspend fun retryDownloadRange(
+        taskId: String, url: String, start: Long, end: Long, 
+        file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers
+    ) {
         var retries = 5
         while (retries > 0) {
-            if (!currentCoroutineContext().isActive) return // 协程已取消
+            if (!currentCoroutineContext().isActive) return
             try { 
                 downloadRange(taskId, url, start, end, file, downloaded, speedLimitKb, headers)
                 return 
@@ -131,12 +122,16 @@ class Segmenter {
                 if (e is CancellationException) throw e
                 retries--; 
                 if (retries == 0) throw e; 
-                delay(1500) // 失败退避
+                delay(1500)
             }
         }
     }
 
-    private fun downloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers) {
+    // 修复：将 downloadRange 显式声明为 suspend，以便调用 currentCoroutineContext
+    private suspend fun downloadRange(
+        taskId: String, url: String, start: Long, end: Long, 
+        file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers
+    ) {
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
         if (realStart > end) { downloaded.addAndGet(existing); return }
@@ -157,7 +152,7 @@ class Segmenter {
                         val startTime = System.currentTimeMillis()
 
                         while (true) {
-                            if (!currentCoroutineContext().isActive) break
+                            if (!currentCoroutineContext().isActive) break // 现在合法了
                             val r = ins.read(buf)
                             if (r <= 0) break
                             raf.write(buf, 0, r)
@@ -168,11 +163,10 @@ class Segmenter {
                                 val speedLimitBytes = speedLimitKb * 1024
                                 val expectedElapsed = (bytesSinceStart * 1000) / speedLimitBytes
                                 val actualElapsed = System.currentTimeMillis() - startTime
-                                if (expectedElapsed > actualElapsed) Thread.sleep(expectedElapsed - actualElapsed)
+                                if (expectedElapsed > actualElapsed) delay(expectedElapsed - actualElapsed) // 用协程 delay 代替 Thread.sleep
                             }
                         }
                     }
-                    // 强制刷盘
                     raf.fd.sync()
                 }
             }
@@ -181,6 +175,7 @@ class Segmenter {
         }
     }
 
+    // M3U8 逻辑保持不变...
     private suspend fun downloadM3u8(taskId: String, url: String, targetDir: File, fileName: String, parts: Int, headers: Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         var finalUrl = url
         if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
@@ -207,7 +202,6 @@ class Segmenter {
                                 activeCalls[taskId] = call
                                 call.execute().use { resp -> 
                                     var bytes = resp.body?.bytes() ?: ByteArray(0)
-                                    // AES 解密
                                     if (aesKey != null) {
                                         val useIv = iv ?: ByteArray(16).apply {
                                             val seq = index
@@ -217,7 +211,6 @@ class Segmenter {
                                         bytes = decryptAES(bytes, aesKey, useIv)
                                     }
                                     partFile.writeBytes(bytes)
-                                    // 强制刷盘
                                     java.io.FileOutputStream(partFile).use { it.fd.sync() }
                                 }
                                 break
@@ -239,8 +232,6 @@ class Segmenter {
         if (!ZeroCore.mergeFiles(tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
 
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
-        
-        // MediaMuxer 兼容性兜底
         val success = withContext(Dispatchers.IO) { 
             try { remuxTsToMp4(mergedTs, outMp4); true } 
             catch (e: Exception) { false } 
@@ -250,7 +241,6 @@ class Segmenter {
         onTick(total, total, 0)
         
         if (!success) {
-            // 如果合成失败，将源文件直接保留为 .ts 给用户
             val fallbackTs = File(targetDir, if (fileName.endsWith(".ts")) fileName else "$fileName.ts")
             if (mergedTs.exists()) mergedTs.renameTo(fallbackTs)
             throw Exception("MP4 封装失败，已保留 .ts 原文件")
@@ -258,7 +248,6 @@ class Segmenter {
         outMp4
     }
 
-    // 支持解析 Master 索引和多码率、AES-128 加密 Key
     private suspend fun extractTsUrlsAndKeys(url: String, visited: MutableSet<String>, currentKey: ByteArray?, currentIv: ByteArray?): Triple<List<String>, ByteArray?, ByteArray?> = withContext(Dispatchers.IO) {
         if (visited.contains(url)) return@withContext Triple(emptyList(), currentKey, currentIv)
         visited.add(url)
@@ -268,7 +257,6 @@ class Segmenter {
         var iv = currentIv
         val lines = text.lines()
         
-        // 解析 Key
         lines.find { it.startsWith("#EXT-X-KEY:") }?.let { keyLine ->
             if (keyLine.contains("METHOD=AES-128")) {
                 val keyUri = Regex("URI=\"(.*?)\"").find(keyLine)?.groupValues?.get(1)

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.webkit.*
+import java.io.ByteArrayInputStream
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
@@ -42,6 +43,7 @@ import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
 import java.io.File
+import java.io.ByteArrayInputStream
 import java.net.URLEncoder
 
 @SuppressLint("SetJavaScriptEnabled")
