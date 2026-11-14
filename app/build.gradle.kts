@@ -9,7 +9,7 @@ plugins {
 
 // 版本信息注入：CI 环境变量优先，本地 fallback
 val injectedVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-val injectedVersionName = System.getenv("VERSION_NAME") ?: "3.0.0"
+val injectedVersionName = System.getenv("VERSION_NAME") ?: "3.0.1"
 val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
