@@ -7,9 +7,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -52,7 +51,7 @@ class MainActivity : ComponentActivity() {
                 AlertDialog(
                     onDismissRequest = { updateInfo = null },
                     title = { Text("发现新版本 v${updateInfo?.version} 🎉") },
-                    text = { Text(updateInfo?.changelog ?: "优化了下载与播放体验。") },
+                    text = { Text(updateInfo?.changelog ?: "优化了下载体验。") },
                     confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
                     dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
                 )
@@ -99,7 +98,6 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             }
         }
     ) { padding ->
-        // 修复：使用 when 直接切换，完全避免 Compose 动画缓存导致的 WebView 泄漏闪退
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (currentTab) {
                 Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
@@ -123,7 +121,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     var prefillUrl by remember { mutableStateOf(initialShareUrl ?: "") }
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     
-    // 多选模式
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedTasks = remember { mutableStateListOf<String>() }
 
@@ -197,8 +194,9 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     }
 
     if (showAddDialog) {
-        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads, speed ->
-            DownloadManager.add(ctx, url, name, threads, speed, h, File(DirStore.resolveDownloadDir(ctx).absolutePath))
+        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads, speed, headers ->
+            // 注意这里增加了 headers 参数
+            DownloadManager.add(ctx, url, name, threads, speed, headers, File(DirStore.resolveDownloadDir(ctx).absolutePath))
             showAddDialog = false
         }
     }

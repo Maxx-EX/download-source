@@ -69,7 +69,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
     
     var isDarkMode by remember { mutableStateOf(false) }
 
-    // 销毁时释放 WebView 防止内存泄漏闪退
     DisposableEffect(Unit) {
         onDispose { webView?.destroy() }
     }
@@ -178,8 +177,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
             Column(Modifier.padding(16.dp)) {
                 Text("浏览器操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface, modifier = Modifier.padding(bottom = 12.dp))
                 BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) { webView?.loadUrl("https://www.bing.com"); showMenuSheet = false }
-                
-                // 功能：提取网页所有图片
                 BrowserMenuItem("提取网页图片", Icons.Default.Image, palette.onSurface) {
                     webView?.evaluateJavascript("""
                         (function() {
@@ -194,7 +191,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                     showMenuSheet = false
                     android.widget.Toast.makeText(ctx, "正在提取图片...", android.widget.Toast.LENGTH_SHORT).show()
                 }
-
                 BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
                 BrowserMenuItem("我的书签", Icons.Default.Bookmarks, palette.onSurface) { showBookmarkList = true; showMenuSheet = false }
                 BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) { isDarkMode = !isDarkMode; showMenuSheet = false }
@@ -228,7 +224,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 历史记录
     if (showHistoryList) {
         val history = BrowserHistoryStore.getHistory(ctx)
         Dialog(onDismissRequest = { showHistoryList = false }) {
@@ -243,7 +238,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 书签
     if (showBookmarkList) {
         val bookmarks = BookmarkStore.get(ctx)
         Dialog(onDismissRequest = { showBookmarkList = false }) {
@@ -257,8 +251,9 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
     }
 
     if (showDownloadDialog) {
-        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed ->
-            DownloadManager.add(ctx, url, name, threads, speed, emptyMap(), DirStore.resolveDownloadDir(ctx))
+        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
+            // 这里也加入了 headers 参数
+            DownloadManager.add(ctx, url, name, threads, speed, headers, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }
     }
