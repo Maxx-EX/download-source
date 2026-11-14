@@ -40,7 +40,12 @@ object DownloadManager {
             try {
                 val shareInfo = NetDiskParser.detect(url)
                 val parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
-                    DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
+                    // 核心：隔离网盘解析功能
+                    if (BuildConfig.CHANNEL == "zeta") {
+                        DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
+                    } else {
+                        throw Exception("网盘解析为内测功能，请下载带 [Zeta] 标签的内测版体验")
+                    }
                 } else url
                 
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName

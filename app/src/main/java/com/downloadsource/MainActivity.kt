@@ -130,7 +130,15 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(if (isSelectionMode) "已选择 ${selectedTasks.size} 项" else "Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (isSelectionMode) "已选择 ${selectedTasks.size} 项" else "Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                        if (BuildConfig.CHANNEL == "zeta") {
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.background(Color.Red, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                Text("内测", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
                 if (isSelectionMode) {
