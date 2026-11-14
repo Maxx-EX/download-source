@@ -9,3 +9,6 @@
 .cxx
 *.apk
 *.aab
+*.keystore
+*.jks
+keystore_base64.txt

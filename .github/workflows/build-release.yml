@@ -1,0 +1,66 @@
+name: build-apk-release
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q gradle-8.9-bin.zip
+          echo "$PWD/gradle-8.9/bin" >> "$GITHUB_PATH"
+          
+      - name: Parse Version
+        id: vars
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION_NAME=$(echo $TAG | sed 's/^v//' | cut -d'-' -f1)
+          BUILD_NUM=$(echo $TAG | sed 's/.*-build//')
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "BUILD_NUM=$BUILD_NUM" >> $GITHUB_ENV
+
+      # 注意：如果你没有配置密钥，请把这段签名代码注释掉，这里展示的是标准流程
+      # - name: Build Release
+      #   env:
+      #     KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      #   run: |
+      #     echo "$KEYSTORE_BASE64" | base64 -d > app/release.jks
+      #     gradle :app:assembleZetaRelease :app:assembleOmegaRelease --no-daemon
+      
+      # 临时用 Debug 包测试发布流
+      - name: Build Release (Fallback to Debug for testing)
+        run: gradle :app:assembleZetaDebug :app:assembleOmegaDebug --no-daemon
+        
+      - name: Rename Artifacts
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/zeta/debug/app-zeta-debug.apk   out/DownloadSource-Zeta-v${VERSION_NAME}.apk
+          cp app/build/outputs/apk/omega/debug/app-omega-debug.apk out/DownloadSource-Omega-v${VERSION_NAME}.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Download source v${{ env.VERSION_NAME }}
+          body_path: CHANGELOG.md
+          files: |
+            out/DownloadSource-Zeta-v${{ env.VERSION_NAME }}.apk
+            out/DownloadSource-Omega-v${{ env.VERSION_NAME }}.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

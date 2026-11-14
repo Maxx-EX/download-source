@@ -7,6 +7,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 版本信息注入：CI 环境变量优先，本地 fallback
+val injectedVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+val injectedVersionName = System.getenv("VERSION_NAME") ?: "3.0.0"
 val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
@@ -17,8 +20,8 @@ android {
         applicationId = "com.downloadsource"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "3.0.0"
+        versionCode = injectedVersionCode
+        versionName = injectedVersionName
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -45,6 +48,31 @@ android {
             versionNameSuffix = "-omega"
             resValue("string", "app_name", "Download source Omega")
             buildConfigField("String", "CHANNEL", "\"omega\"")
+        }
+    }
+
+    // 签名配置：仅当环境变量存在时生效，本地 debug 构建不受影响
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("KEYSTORE_PATH")
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
 
@@ -77,5 +105,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

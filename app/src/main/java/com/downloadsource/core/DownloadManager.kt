@@ -1,21 +1,30 @@
 package com.downloadsource.core
 
 import android.content.Context
+import android.media.MediaScannerConnection
 import com.downloadsource.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.net.URLDecoder
 
 object DownloadManager {
+    // 全局单例 OkHttpClient，复用连接池
+    val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val segmenter = Segmenter()
+    private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
-    private val httpClient = OkHttpClient()
+    private val mutex = Mutex()
     private const val MAX_CONCURRENT = 3
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
@@ -34,10 +43,10 @@ object DownloadManager {
     fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, dir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
         val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
-        _tasks.value = _tasks.value + task
-        TaskStore.save(context, _tasks.value)
-        
         scope.launch {
+            mutex.withLock { _tasks.value = _tasks.value + task }
+            TaskStore.save(context, _tasks.value)
+            
             try {
                 val shareInfo = NetDiskParser.detect(url)
                 var parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
@@ -46,8 +55,8 @@ object DownloadManager {
                 } else url
                 
                 parsedUrl = MirrorResolver.resolveFastest(context, parsedUrl)
-
-                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName
+                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
+                
                 update(context, task.id) { it.copy(url = parsedUrl, fileName = realName) }
                 startTask(context, task.id)
             } catch (e: Exception) {
@@ -70,15 +79,17 @@ object DownloadManager {
         jobs[id] = scope.launch {
             try {
                 val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
-                // 传入 task.id 以支持中断底层 Socket
                 val out = segmenter.download(t.id, t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
                     update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
                 update(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
+                
+                // 加入系统媒体库
+                MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
+                
                 checkPending(context)
             } catch (e: CancellationException) {
-                // 取消时立即调用 segmenter 释放 socket
                 segmenter.cancelTask(t.id)
                 update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
                 throw e
@@ -98,7 +109,6 @@ object DownloadManager {
     }
 
     fun pause(context: Context, id: String) {
-        // 中断底层的 OkHttp Call
         segmenter.cancelTask(id)
         jobs[id]?.cancel(); jobs.remove(id)
         update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
@@ -129,11 +139,13 @@ object DownloadManager {
         TaskStore.save(context, _tasks.value)
     }
 
-    private fun probeRealFileName(url: String): String {
+    private fun probeRealFileName(url: String, headers: Map<String, String>): String {
         try {
-            if (url.contains(".m3u8") || url.endsWith(".ts", true)) return "video_${System.currentTimeMillis()}.mp4"
-            val req = Request.Builder().url(url).head().build()
-            httpClient.newCall(req).execute().use { resp ->
+            if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
+            val builder = Request.Builder().url(url).head()
+            headers.forEach { (k, v) -> builder.header(k, v) }
+            httpClient.newCall(builder.build()).execute().use { resp ->
+                // 解析 RFC 5987 filename*
                 val disposition = resp.header("Content-Disposition")
                 if (disposition != null && disposition.contains("filename=")) {
                     var name = disposition.substringAfter("filename=").trim('"', ' ')
@@ -143,15 +155,8 @@ object DownloadManager {
                 val path = resp.request.url.encodedPath
                 val last = path.substringAfterLast('/')
                 if (last.isNotBlank() && last.contains('.')) return last
-                val mime = resp.header("Content-Type") ?: ""
-                val ext = when {
-                    mime.contains("video/mp4") -> ".mp4"
-                    mime.contains("audio/mpeg") -> ".mp3"
-                    mime.contains("application/vnd.android.package-archive") -> ".apk"
-                    else -> ".bin"
-                }
-                return "download_${System.currentTimeMillis()}$ext"
             }
-        } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
+        } catch (_: Exception) { }
+        return "download_${System.currentTimeMillis()}.bin"
     }
 }
