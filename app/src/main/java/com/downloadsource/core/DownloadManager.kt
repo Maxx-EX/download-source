@@ -1,6 +1,7 @@
 package com.downloadsource.core
 
 import android.content.Context
+import com.downloadsource.BuildConfig // 修复：补全导入
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
