@@ -1,13 +1,18 @@
 package com.downloadsource.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import com.downloadsource.ThemeStore
 
 data class GradientPalette(
     val primary: List<Color>,
@@ -39,18 +44,23 @@ val DarkPalette = GradientPalette(
 val LocalPalette = staticCompositionLocalOf { LightPalette }
 
 @Composable
+fun rememberDark(): Boolean {
+    val ctx = LocalContext.current
+    val systemDark = isSystemInDarkTheme()
+    return when (ThemeStore.get(ctx)) {
+        ThemeStore.LIGHT -> false
+        ThemeStore.DARK -> true
+        else -> systemDark
+    }
+}
+
+@Composable
 fun GradientBackground(palette: GradientPalette, content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalPalette provides palette) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        colors = palette.background,
-                        start = Offset.Zero,
-                        end = Offset.Infinite
-                    )
-                )
+            Modifier.fillMaxSize().background(
+                Brush.linearGradient(palette.background, Offset.Zero, Offset.Infinite)
+            )
         ) { content() }
     }
 }

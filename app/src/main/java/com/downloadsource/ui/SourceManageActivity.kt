@@ -22,7 +22,7 @@ class SourceManageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val isDark = rememberDark()
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
                 MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {

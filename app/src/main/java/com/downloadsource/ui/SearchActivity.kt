@@ -29,7 +29,7 @@ class SearchActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val isDark = rememberDark()
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
                 MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
@@ -58,7 +58,7 @@ fun SearchScreen(onClose: () -> Unit) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("输入网址或搜索词") },
+                placeholder = { Text("输入网址或关键词") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)),

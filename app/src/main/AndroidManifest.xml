@@ -33,6 +33,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".ui.SearchActivity" android:exported="false" />
         <activity android:name=".ui.SourceManageActivity" android:exported="false" />
         <activity android:name=".CrashActivity" android:exported="false" />

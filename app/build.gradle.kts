@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val buildTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+    .format(java.util.Date())
+
 android {
     namespace = "com.downloadsource"
     compileSdk = 34
@@ -11,8 +14,10 @@ android {
         applicationId = "com.downloadsource"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
 
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         externalNativeBuild {
@@ -53,7 +58,6 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-// 关键修复：自动同步 javac / kotlinc 目标
 kotlin { jvmToolchain(17) }
 
 dependencies {

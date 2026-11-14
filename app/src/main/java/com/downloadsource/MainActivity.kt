@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.storage.DirStore
@@ -48,7 +49,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+            var isDark by remember { mutableStateOf(rememberDark()) }
+            LifecycleResumeEffect(Unit) {
+                isDark = rememberDark()
+                onPauseOrDispose {}
+            }
+
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
                 MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
@@ -58,7 +64,7 @@ class MainActivity : ComponentActivity() {
                             picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
                         },
                         onOpenSearch = { startActivity(Intent(this, SearchActivity::class.java)) },
-                        onOpenSources = { startActivity(Intent(this, SourceManageActivity::class.java)) },
+                        onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                     )
                 }
             }
@@ -70,44 +76,49 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     onPickFolder: ((Uri) -> Unit) -> Unit,
     onOpenSearch: () -> Unit,
-    onOpenSources: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
 
     var urlInput by remember { mutableStateOf("") }
-    var dirUri by remember { mutableStateOf(DirStore.get(ctx)) }
+    var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
+    LifecycleResumeEffect(Unit) {
+        dirPath = DirStore.resolveDownloadDir(ctx).absolutePath
+        onPauseOrDispose {}
+    }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() } + " 通道",
+                    "${BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() }} · v${BuildConfig.VERSION_NAME}",
                     color = palette.onSurfaceDim,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             IconButton(onClick = onOpenSearch) { Icon(Icons.Default.Search, null, tint = palette.onSurface) }
-            IconButton(onClick = onOpenSources) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
+            IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
         }
 
         Spacer(Modifier.height(14.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("保存到：", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+            Text("保存到", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(8.dp))
             Text(
-                DirStore.resolveDownloadDir(ctx).absolutePath,
+                dirPath,
                 color = palette.onSurface,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1
             )
-            TextButton(onClick = { onPickFolder { dirUri = it } }) {
+            TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) {
                 Icon(Icons.Default.Folder, null)
                 Spacer(Modifier.width(4.dp))
-                Text("选择")
+                Text("更改")
             }
         }
 
@@ -117,7 +128,7 @@ fun MainScreen(
             OutlinedTextField(
                 value = urlInput,
                 onValueChange = { urlInput = it },
-                placeholder = { Text("粘贴下载链接…") },
+                placeholder = { Text("粘贴下载链接") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)),
@@ -134,7 +145,7 @@ fun MainScreen(
 
         if (tasks.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("还没有任务，粘贴一个链接开始下载吧", color = palette.onSurfaceDim)
+                Text("暂无下载任务", color = palette.onSurfaceDim)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
