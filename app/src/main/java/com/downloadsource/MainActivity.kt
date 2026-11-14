@@ -5,18 +5,14 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,9 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -46,7 +42,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.core.UpdateManager
-import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.ui.*
@@ -109,13 +104,20 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
     var showFabMenu by remember { mutableStateOf(false) }
+    
+    // 状态提升：用于通知 Browser 打开特定面板
+    var triggerSniff by remember { mutableStateOf(false) }
+    var triggerHistory by remember { mutableStateOf(false) }
 
     if (playingUri != null) {
         VideoPlayerScreen(uri = playingUri!!, onBack = { playingUri = null })
         return
     }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val screenWidth = maxWidth
+        val screenHeight = maxHeight
+        
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
@@ -132,17 +134,41 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
                         onPlayStream = { playingUri = Uri.parse(it) },
-                        onShowSnackbar = {}
+                        triggerSniff = triggerSniff,
+                        onSniffHandled = { triggerSniff = false },
+                        triggerHistory = triggerHistory,
+                        onHistoryHandled = { triggerHistory = false }
                     )
                     Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
                 }
             }
         }
         
-        DraggableFloatingButton(
-            onClick = { currentTab = Tab.DOWNLOAD },
-            onLongClick = { showFabMenu = true }
-        )
+        // 修复版悬浮球：全屏可拖动
+        var offsetX by remember { mutableFloatStateOf(0f) }
+        var offsetY by remember { mutableFloatStateOf(0f) }
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .size(56.dp)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidth.value * 2.5f) // 简单限制边界
+                        offsetY = (offsetY + dragAmount.y).coerceIn(-screenHeight.value * 2f, screenHeight.value * 2f)
+                    }
+                }
+                .clip(CircleShape)
+                .background(LocalPalette.current.primary.first().copy(alpha = 0.9f))
+                .combinedClickable(
+                    onClick = { currentTab = Tab.DOWNLOAD },
+                    onLongClick = { showFabMenu = true }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Home, "Top", tint = Color.White)
+        }
     }
 
     if (showFabMenu) {
@@ -150,43 +176,19 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             Column(Modifier.padding(16.dp)) {
                 Text("快捷控制台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.onSurface)
                 Spacer(Modifier.height(16.dp))
-                BrowserMenuItem("历史浏览记录", Icons.Default.History, LocalPalette.current.onSurface) { 
-                    currentTab = Tab.BROWSER
-                    showFabMenu = false
-                }
                 BrowserMenuItem("资源嗅探列表", Icons.Default.Radar, LocalPalette.current.onSurface) { 
                     currentTab = Tab.BROWSER
+                    triggerSniff = true // 发送指令
                     showFabMenu = false
                 }
-                BrowserMenuItem("回到多页首页", Icons.Default.Tab, LocalPalette.current.onSurface) { 
+                BrowserMenuItem("历史浏览记录", Icons.Default.History, LocalPalette.current.onSurface) { 
                     currentTab = Tab.BROWSER
+                    triggerHistory = true
                     showFabMenu = false
                 }
                 Spacer(Modifier.height(16.dp))
             }
         }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun DraggableFloatingButton(onClick: () -> Unit, onLongClick: () -> Unit) {
-    val palette = LocalPalette.current
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .size(48.dp)
-            .draggable(orientation = Orientation.Vertical, state = rememberDraggableState { delta -> offsetY += delta })
-            .draggable(orientation = Orientation.Horizontal, state = rememberDraggableState { delta -> offsetX += delta })
-            .clip(CircleShape)
-            .background(palette.primary.first().copy(alpha = 0.9f))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(Icons.Default.Home, "Top", tint = Color.White)
     }
 }
 
@@ -196,15 +198,15 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     
     var showAddDialog by remember { mutableStateOf(initialShareUrl != null) }
     var prefillUrl by remember { mutableStateOf(initialShareUrl ?: "") }
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     var searchQuery by remember { mutableStateOf("") }
     
-    var isSelectionMode by remember { mutableStateOf(false) }
-    val selectedTasks = remember { mutableStateListOf<String>() }
+    // 过滤功能
+    var filterMode by remember { mutableStateOf("全部") }
+    val filters = listOf("全部", "下载中", "已完成", "失败")
 
     LifecycleResumeEffect(Unit) { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath; onPauseOrDispose {} }
 
@@ -212,7 +214,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
         val q = searchQuery.trim()
         if (q.isNotEmpty()) {
             keyboardController?.hide()
-            focusManager.clearFocus()
             if (q.startsWith("http") || q.contains(".com") || q.contains(".cn") || q.contains("pan.") || q.contains("lanzou")) {
                 DownloadManager.add(ctx, q, null, 8, 0, emptyMap(), File(dirPath))
                 searchQuery = ""
@@ -233,45 +234,20 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (isSelectionMode) "已选择 ${selectedTasks.size} 项" else "Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
-                        if (BuildConfig.CHANNEL == "zeta") {
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.background(Color.Red, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                                Text("内测", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
+                    Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
-                if (isSelectionMode) {
-                    IconButton(onClick = { 
-                        selectedTasks.forEach { DownloadManager.remove(ctx, it) }
-                        selectedTasks.clear()
-                        isSelectionMode = false
-                    }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
-                    IconButton(onClick = { isSelectionMode = false; selectedTasks.clear() }) { Icon(Icons.Default.Close, null, tint = palette.onSurface) }
-                } else {
-                    if (tasks.isNotEmpty()) IconButton(onClick = { isSelectionMode = true }) { Icon(Icons.Default.Checklist, null, tint = palette.onSurface) }
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
-                }
+                IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
             }
             Spacer(Modifier.height(16.dp))
             
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(horizontal = 16.dp, vertical = 4.dp)) {
                 Icon(Icons.Default.Search, null, tint = palette.onSurfaceDim)
                 BasicTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    textStyle = TextStyle(color = palette.onSurface),
-                    cursorBrush = SolidColor(palette.primary.first()),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                    decorationBox = { inner ->
-                        if (searchQuery.isEmpty()) Text("输入链接或搜索关键词...", color = palette.onSurfaceDim)
-                        inner()
-                    },
+                    value = searchQuery, onValueChange = { searchQuery = it }, textStyle = TextStyle(color = palette.onSurface),
+                    cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
+                    decorationBox = { inner -> if (searchQuery.isEmpty()) Text("输入链接或搜索关键词...", color = palette.onSurfaceDim); inner() },
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                 )
                 if (searchQuery.isNotEmpty()) {
@@ -280,50 +256,52 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
             }
             
             Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("存至: ", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
-                Text(dirPath, color = palette.onSurface, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                if (!isSelectionMode) TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) { Text("更改") }
+            
+            // 状态过滤栏
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                filters.forEach { f ->
+                    val selected = filterMode == f
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(if (selected) palette.primary.first() else palette.surface).clickable { filterMode = f }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text(f, color = if (selected) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
+            
             Spacer(Modifier.height(10.dp))
             
-            if (tasks.isEmpty()) {
+            val filteredTasks = tasks.filter { 
+                when(filterMode) {
+                    "下载中" -> it.status == com.downloadsource.core.TaskStatus.Running
+                    "已完成" -> it.status == com.downloadsource.core.TaskStatus.Completed
+                    "失败" -> it.status == com.downloadsource.core.TaskStatus.Failed
+                    else -> true
+                }
+            }
+
+            if (filteredTasks.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务 (￣▽￣)", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
-                    items(tasks, key = { it.id }) { task ->
-                        if (isSelectionMode) {
-                            Row(Modifier.fillMaxWidth().clickable {
-                                if (selectedTasks.contains(task.id)) selectedTasks.remove(task.id) else selectedTasks.add(task.id)
-                            }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = selectedTasks.contains(task.id), onCheckedChange = { 
-                                    if (it) selectedTasks.add(task.id) else selectedTasks.remove(task.id) 
-                                })
-                                DownloadCard(task = task, onPause = {}, onResume = {}, onDelete = {}, onOpen = {})
-                            }
-                        } else {
-                            DownloadCard(
-                                task = task, 
-                                onPause = { DownloadManager.pause(ctx, task.id) }, 
-                                onResume = { DownloadManager.start(ctx, task.id) }, 
-                                onDelete = { DownloadManager.remove(ctx, task.id) },
-                                onOpen = { }
-                            )
-                        }
+                    items(filteredTasks, key = { it.id }) { task ->
+                        DownloadCard(
+                            task = task, 
+                            onPause = { DownloadManager.pause(ctx, task.id) }, 
+                            onResume = { DownloadManager.start(ctx, task.id) }, 
+                            onDelete = { DownloadManager.remove(ctx, task.id) },
+                            onOpen = { }
+                        )
                     }
                 }
             }
         }
 
-        if (!isSelectionMode) {
-            FloatingActionButton(
-                onClick = { showAddDialog = true; prefillUrl = "" },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-                containerColor = palette.primary.first(),
-                shape = androidx.compose.foundation.shape.CircleShape
-            ) {
-                Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-            }
+        FloatingActionButton(
+            onClick = { showAddDialog = true; prefillUrl = "" },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            containerColor = palette.primary.first(),
+            shape = androidx.compose.foundation.shape.CircleShape
+        ) {
+            Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White)
         }
     }
 

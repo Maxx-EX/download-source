@@ -46,7 +46,14 @@ import java.net.URLEncoder
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, onShowSnackbar: (String) -> Unit) {
+fun BrowserScreen(
+    onPlayVideo: (File) -> Unit, 
+    onPlayStream: (String) -> Unit,
+    triggerSniff: Boolean,
+    onSniffHandled: () -> Unit,
+    triggerHistory: Boolean,
+    onHistoryHandled: () -> Unit
+) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     
@@ -58,11 +65,11 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
     var showSniffList by remember { mutableStateOf(false) }
-    var showMenuSheet by remember { mutableStateOf(false) }
-    var isDarkMode by remember { mutableStateOf(false) }
-
-    // 大功能：多网页标签
-    val openedTabs = remember { mutableStateListOf("https://www.bing.com") }
+    var showHistoryList by remember { mutableStateOf(false) }
+    
+    // 响应外部长按悬浮球的指令
+    LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
+    LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
 
     val doSearch = {
         val q = urlInput.trim()
@@ -77,7 +84,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
                 }
             }
             webView?.loadUrl(target)
-            if (!openedTabs.contains(target)) openedTabs.add(target)
             val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(webView?.windowToken, 0)
         }
@@ -88,7 +94,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // Via 风格顶栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { 
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) 
@@ -107,20 +112,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
                     )
                 }
                 IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
-                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, null, tint = palette.onSurface) }
-                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
-            }
-
-            // 小功能：多标签栏滑动
-            if (openedTabs.size > 1) {
-                LazyRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(openedTabs) { tabUrl ->
-                        val isActive = tabUrl == currentUrl
-                        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (isActive) palette.primary.first().copy(alpha = 0.2f) else palette.surface).clickable { webView?.loadUrl(tabUrl) }.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                            Text(tabUrl.substringAfter("//").take(15), color = if (isActive) palette.primary.first() else palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                        }
-                    }
-                }
+                IconButton(onClick = { showHistoryList = true }) { Icon(Icons.Default.History, null, tint = palette.onSurface) }
             }
 
             AndroidView(
@@ -130,13 +122,20 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         
+                        // 核心反爬：伪装成真实的 Chrome 手机版
+                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
+                        // 允许第三方 Cookie
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        
                         webViewClient = object : SafeWebViewClient(
                             onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                 val url = request.url.toString()
-                                if (url.contains("captcha") || url.contains("verify")) return null
+                                // 放行验证码相关资源，防止触发循环拦截
+                                if (url.contains("captcha") || url.contains("verify") || url.contains("geetest")) return null
+                                
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
                                     if (!sniffedUrls.contains(url) && sniffedUrls.size < 50) sniffedUrls.add(url)
@@ -164,26 +163,32 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
         }
     }
 
-    if (showMenuSheet) {
-        ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
-            Column(Modifier.padding(16.dp)) {
-                BrowserMenuItem("新建标签页", Icons.Default.Add, palette.onSurface) { 
-                    webView?.loadUrl("https://www.bing.com"); openedTabs.add("https://www.bing.com"); showMenuSheet = false 
+    if (showSniffList) {
+        Dialog(onDismissRequest = { showSniffList = false }) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
+                Text("已抓取资源 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                LazyColumn {
+                    items(sniffedUrls) { url ->
+                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
+                            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
+                        }
+                    }
                 }
-                BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) { webView?.loadUrl("https://www.bing.com"); showMenuSheet = false }
-                BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) { isDarkMode = !isDarkMode; webView?.reload(); showMenuSheet = false }
-                BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, currentUrl) }, "分享网页")); showMenuSheet = false }
-                Spacer(Modifier.height(16.dp))
             }
         }
     }
 
-    if (showSniffList) {
-        Dialog(onDismissRequest = { showSniffList = false }) {
+    if (showHistoryList) {
+        val history = BrowserHistoryStore.getHistory(ctx)
+        Dialog(onDismissRequest = { showHistoryList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("历史记录", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    TextButton(onClick = { BrowserHistoryStore.clearHistory(ctx) }) { Text("清空") }
+                }
                 LazyColumn {
-                    items(sniffedUrls) { url ->
-                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
+                    items(history) { url ->
+                        Row(Modifier.fillMaxWidth().clickable { webView?.loadUrl(url); showHistoryList = false }.padding(12.dp)) {
                             Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
                         }
                     }
