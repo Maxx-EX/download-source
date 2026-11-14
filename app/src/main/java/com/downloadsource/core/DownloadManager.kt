@@ -45,14 +45,27 @@ object DownloadManager {
             
             try {
                 val shareInfo = NetDiskParser.detect(url)
-                var parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
-                    if (BuildConfig.CHANNEL == "zeta") DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
-                    else throw Exception("网盘解析为内测功能，请下载 Zeta 版体验")
-                } else url
+                if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
+                    if (BuildConfig.CHANNEL == "zeta") {
+                        // 解析出多个文件列表
+                        val results = DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
+                        remove(context, task.id) // 移除占位任务
+                        
+                        // 将所有解析结果加入下载队列
+                        for ((fileName, downloadUrl) in results) {
+                            val newTask = DownloadTask(url = downloadUrl, fileName = fileName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+                            mutex.withLock { _tasks.value = _tasks.value + newTask }
+                            TaskStore.save(context, _tasks.value)
+                            startTask(context, newTask.id)
+                        }
+                    } else {
+                        throw Exception("网盘解析为内测功能，请下载 Zeta 版体验")
+                    }
+                    return@launch
+                }
                 
-                parsedUrl = MirrorResolver.resolveFastest(context, parsedUrl)
+                var parsedUrl = MirrorResolver.resolveFastest(context, url)
                 
-                // 如果是 DataURL (Blob)，直接生成名字
                 if (parsedUrl.startsWith("data:")) {
                     val mime = parsedUrl.substringAfter("data:").substringBefore(";")
                     val ext = mimeToExtension(mime)
@@ -71,7 +84,6 @@ object DownloadManager {
         }
     }
 
-    // ... startTask, pause, rename, remove 保持原样 ...
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
 
     private fun startTask(context: Context, id: String) {
@@ -125,6 +137,16 @@ object DownloadManager {
     fun autoResumeTasks(context: Context) {
         _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
+    
+    // 修复：补回缺失的重命名方法
+    fun rename(context: Context, id: String, newName: String) {
+        val t = _tasks.value.find { it.id == id } ?: return
+        val dir = File(t.dirPath)
+        val oldFile = File(dir, t.fileName)
+        val newFile = File(dir, newName)
+        if (oldFile.exists()) oldFile.renameTo(newFile)
+        update(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
+    }
 
     fun remove(context: Context, id: String) {
         segmenter.cancelTask(id)
@@ -139,30 +161,22 @@ object DownloadManager {
         TaskStore.save(context, _tasks.value)
     }
 
-    // 核心升级：智能后缀与文件名解析引擎
     private fun probeRealFileName(url: String, headers: Map<String, String>): String {
         try {
             if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
-            
             val builder = Request.Builder().url(url).head()
             headers.forEach { (k, v) -> builder.header(k, v) }
             httpClient.newCall(builder.build()).execute().use { resp ->
-                // 1. 优先从 Content-Disposition 解析真实文件名
                 val disposition = resp.header("Content-Disposition")
                 if (disposition != null && disposition.contains("filename=")) {
                     var name = disposition.substringAfter("filename=").trim('"', ' ')
                     if (name.contains("''")) name = name.substringAfter("''")
                     return URLDecoder.decode(name, "UTF-8")
                 }
-                
-                // 2. 从 URL 中截取最后的字段
                 val path = resp.request.url.encodedPath
                 var last = path.substringAfterLast('/')
-                if (last.isNotBlank() && last.contains('.')) {
-                    return URLDecoder.decode(last, "UTF-8")
-                }
+                if (last.isNotBlank() && last.contains('.')) return URLDecoder.decode(last, "UTF-8")
                 
-                // 3. 如果没有后缀，通过 MIME 类型强行映射后缀
                 val mime = resp.header("Content-Type") ?: ""
                 val ext = mimeToExtension(mime)
                 
@@ -172,29 +186,19 @@ object DownloadManager {
         } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
     }
 
-    // MIME 到扩展名的精准映射字典
     private fun mimeToExtension(mime: String): String {
         return when {
             mime.contains("video/mp4") -> ".mp4"
             mime.contains("video/quicktime") -> ".mov"
             mime.contains("video/x-matroska") -> ".mkv"
-            mime.contains("video/x-flv") -> ".flv"
             mime.contains("video/webm") -> ".webm"
             mime.contains("audio/mpeg") -> ".mp3"
             mime.contains("audio/aac") -> ".aac"
-            mime.contains("audio/x-wav") -> ".wav"
             mime.contains("application/vnd.android.package-archive") -> ".apk"
             mime.contains("application/pdf") -> ".pdf"
             mime.contains("image/jpeg") -> ".jpg"
             mime.contains("image/png") -> ".png"
-            mime.contains("image/gif") -> ".gif"
-            mime.contains("image/webp") -> ".webp"
-            mime.contains("text/html") -> ".html"
-            mime.contains("text/plain") -> ".txt"
             mime.contains("application/zip") -> ".zip"
-            mime.contains("application/x-msdownload") -> ".exe"
-            mime.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document") -> ".docx"
-            mime.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") -> ".xlsx"
             else -> ".bin" // 兜底
         }
     }

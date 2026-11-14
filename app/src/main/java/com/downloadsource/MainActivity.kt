@@ -8,7 +8,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,6 +37,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -91,7 +91,7 @@ class MainActivity : ComponentActivity() {
                         initialShareUrl = sharedText,
                         onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
                         onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
-                        onOpenNetDisk = { startActivity(Intent(this@MainActivity, NetDiskActivity::class.java)) } // 内测入口
+                        onOpenNetDisk = { startActivity(Intent(this@MainActivity, NetDiskActivity::class.java)) }
                     )
                 }
             }
@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
 
 enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold(
     initialShareUrl: String?, 
@@ -148,7 +149,6 @@ fun MainScaffold(
             }
         }
         
-        // 修复版悬浮球：修正吸附中心点，防止飞出屏幕
         var offsetX by remember { mutableFloatStateOf((screenWidth.value / 2) - 100f) }
         var offsetY by remember { mutableFloatStateOf(screenHeight.value - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -170,7 +170,6 @@ fun MainScaffold(
                         },
                         onDragEnd = {
                             if (isHoveringBottomBar) {
-                                // 吸附居中对齐
                                 val third = screenWidth.value * 2.5f / 3f
                                 if (offsetX < third) { currentTab = Tab.DOWNLOAD; offsetX = third / 2 - 28f }
                                 else if (offsetX < third * 2) { currentTab = Tab.BROWSER; offsetX = third * 1.5f - 28f }
@@ -191,12 +190,11 @@ fun MainScaffold(
             Icon(Icons.Default.Menu, "Menu", tint = Color.White)
         }
 
-        // 长按悬浮球展开的垂直标签（使用 Popup 防止位置错乱）
         if (showMenu) {
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                offset = androidx.compose.ui.unit.DpOffset(offsetX.dp, offsetY.dp)
+                offset = DpOffset(offsetX.dp, offsetY.dp)
             ) {
                 DropdownMenuItem(text = { Text("下载列表") }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
                 DropdownMenuItem(text = { Text("浏览器") }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
@@ -261,7 +259,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
                 
-                // 内测版专属快捷入口
                 if (BuildConfig.CHANNEL == "zeta") {
                     IconButton(onClick = onOpenNetDisk) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
                 }
