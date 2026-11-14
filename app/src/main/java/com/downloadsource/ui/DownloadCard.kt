@@ -54,13 +54,15 @@ fun DownloadCard(
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf(task.fileName) }
 
+    // 小功能：下载速度平滑动画
+    val animatedSpeed by animateFloatAsState(targetValue = task.speed.toFloat(), animationSpec = tween(500), label = "speed")
+
     Box {
         Row(
             modifier.fillMaxWidth()
-                .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = palette.primary.first().copy(alpha = 0.2f))
-                .clip(RoundedCornerShape(22.dp))
+                .shadow(4.dp, RoundedCornerShape(16.dp), ambientColor = palette.primary.first().copy(alpha = 0.1f))
+                .clip(RoundedCornerShape(16.dp))
                 .background(palette.surface)
-                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f))), RoundedCornerShape(22.dp))
                 .combinedClickable(
                     onClick = { if (task.status == TaskStatus.Completed) onOpen() },
                     onLongClick = { showSheet = true }
@@ -72,13 +74,14 @@ fun DownloadCard(
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
+                val speedStr = if (animatedSpeed > 0) String.format("%.1f KB/s", animatedSpeed / 1024) else ""
                 Text(
                     when (task.status) {
                         TaskStatus.Failed -> "失败：${task.error ?: ""}"
                         TaskStatus.Completed -> "已完成 (点击打开)"
                         TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
-                        else -> "${task.sizeText} · ${task.threads}线程 ${if (task.speedText.isNotEmpty()) "· ${task.speedText}" else ""}"
+                        else -> "${task.sizeText} · ${task.threads}线程 ${if (speedStr.isNotEmpty()) "· $speedStr" else ""}"
                     },
                     color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
@@ -149,8 +152,8 @@ private fun ProgressRing(progress: Float, running: Boolean, completed: Boolean, 
     val transition = rememberInfiniteTransition(label = "ring")
     val rotation by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "spin")
     val animatedProgress by animateFloatAsState(progress, tween(400, easing = FastOutSlowInEasing), label = "p")
-    Canvas(Modifier.size(56.dp)) {
-        val stroke = 5.dp.toPx(); val inset = stroke / 2
+    Canvas(Modifier.size(48.dp)) {
+        val stroke = 4.dp.toPx(); val inset = stroke / 2
         val arcSize = Size(size.width - stroke, size.height - stroke)
         val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
         drawArc(Color.White.copy(alpha = 0.2f), 0f, 360f, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))

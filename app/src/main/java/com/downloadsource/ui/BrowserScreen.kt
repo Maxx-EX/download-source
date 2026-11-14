@@ -3,17 +3,15 @@ package com.downloadsource.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -45,9 +43,10 @@ import com.downloadsource.web.SafeWebViewClient
 import java.io.File
 import java.net.URLEncoder
 
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
+fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, onShowSnackbar: (String) -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     
@@ -62,7 +61,9 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
     var showMenuSheet by remember { mutableStateOf(false) }
     var isDarkMode by remember { mutableStateOf(false) }
 
-    // 抽离搜索/访问逻辑，供回车键和搜索按钮共用
+    // 大功能：多网页标签
+    val openedTabs = remember { mutableStateListOf("https://www.bing.com") }
+
     val doSearch = {
         val q = urlInput.trim()
         if (q.isNotEmpty()) {
@@ -76,7 +77,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                 }
             }
             webView?.loadUrl(target)
-            // 提交后隐藏键盘
+            if (!openedTabs.contains(target)) openedTabs.add(target)
             val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(webView?.windowToken, 0)
         }
@@ -96,32 +97,29 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) 
                 }
                 
-                // 极简地址栏
                 Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
                     BasicTextField(
-                        value = urlInput,
-                        onValueChange = { urlInput = it },
-                        textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
-                        cursorBrush = SolidColor(palette.primary.first()),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), // 将键盘右下角改为"前往"
-                        keyboardActions = KeyboardActions(onGo = { doSearch() }), // 绑定回车事件
-                        decorationBox = { innerTextField ->
-                            if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim)
-                            innerTextField()
-                        },
+                        value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
+                        cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
+                        decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                
-                IconButton(onClick = { doSearch() }) { 
-                    Icon(Icons.Default.Search, null, tint = palette.primary.first()) 
-                }
-                IconButton(onClick = { webView?.reload() }) { 
-                    Icon(Icons.Default.Refresh, null, tint = palette.onSurface) 
-                }
-                IconButton(onClick = { showMenuSheet = true }) { 
-                    Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) 
+                IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
+                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, null, tint = palette.onSurface) }
+                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
+            }
+
+            // 小功能：多标签栏滑动
+            if (openedTabs.size > 1) {
+                LazyRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(openedTabs) { tabUrl ->
+                        val isActive = tabUrl == currentUrl
+                        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (isActive) palette.primary.copy(alpha = 0.2f) else palette.surface).clickable { webView?.loadUrl(tabUrl) }.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            Text(tabUrl.substringAfter("//").take(15), color = if (isActive) palette.primary.first() else palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        }
+                    }
                 }
             }
 
@@ -131,8 +129,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
                         
                         webViewClient = object : SafeWebViewClient(
                             onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
@@ -171,6 +167,9 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
+                BrowserMenuItem("新建标签页", Icons.Default.Add, palette.onSurface) { 
+                    webView?.loadUrl("https://www.bing.com"); openedTabs.add("https://www.bing.com"); showMenuSheet = false 
+                }
                 BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) { webView?.loadUrl("https://www.bing.com"); showMenuSheet = false }
                 BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) { isDarkMode = !isDarkMode; webView?.reload(); showMenuSheet = false }
                 BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, currentUrl) }, "分享网页")); showMenuSheet = false }

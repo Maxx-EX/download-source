@@ -17,36 +17,32 @@ import com.downloadsource.ThemeStore
 
 data class GradientPalette(val primary: List<Color>, val accent: List<Color>, val background: List<Color>, val surface: Color, val onSurface: Color, val onSurfaceDim: Color)
 
+// 雾霾蓝 / 优雅灰
 val LightPalette = GradientPalette(
-    primary = listOf(Color(0xFF6366F1), Color(0xFF8B5CF6)), 
-    accent = listOf(Color(0xFF06B6D4)),
-    background = listOf(Color(0xFFF8FAFC), Color(0xFFE2E8F0)), // 高级浅灰蓝
+    primary = listOf(Color(0xFF5B8DEF), Color(0xFF7AA2F7)), 
+    accent = listOf(Color(0xFF4ECDC4)),
+    background = listOf(Color(0xFFF4F7FB), Color(0xFFE6EBF5)), 
     surface = Color(0xE6FFFFFF), 
-    onSurface = Color(0xFF1E293B), 
-    onSurfaceDim = Color(0xFF64748B)
+    onSurface = Color(0xFF2D3748), 
+    onSurfaceDim = Color(0xFF718096)
 )
+// 赛博暗夜
 val DarkPalette = GradientPalette(
-    primary = listOf(Color(0xFF818CF8), Color(0xFFA78BFA)), 
-    accent = listOf(Color(0xFF22D3EE)),
-    background = listOf(Color(0xFF0F172A), Color(0xFF1E293B)), 
+    primary = listOf(Color(0xFF66B2FF), Color(0xFF3399FF)), 
+    accent = listOf(Color(0xFF00FFCC)),
+    background = listOf(Color(0xFF121826), Color(0xFF1A2235)), 
     surface = Color(0x80000000), 
-    onSurface = Color(0xFFF1F5F9), 
-    onSurfaceDim = Color(0xFF94A3B8)
+    onSurface = Color(0xFFE2E8F0), 
+    onSurfaceDim = Color(0xFFA0AEC0)
 )
 
-// 改掉难看的粉白，换成日落珊瑚红
-val CoralLightPalette = LightPalette.copy(primary = listOf(Color(0xFFFF7E5F), Color(0xFFFEB47B)), background = listOf(Color(0xFFFFF7F5), Color(0xFFFFF0EC)))
-val CoralDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFFFF9A8B), Color(0xFFFF6A88)), background = listOf(Color(0xFF2D1B1B), Color(0xFF1A1111)))
+// 玫瑰金
+val RoseLightPalette = LightPalette.copy(primary = listOf(Color(0xFFF08A8A), Color(0xFFFFADAD)), background = listOf(Color(0xFFFCF5F5), Color(0xFFF7E8E8)))
+val RoseDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFFFF9A9A), Color(0xFFFF7A7A)), background = listOf(Color(0xFF2D1F1F), Color(0xFF1F1515)))
 
-val ForestLightPalette = LightPalette.copy(primary = listOf(Color(0xFF10B981), Color(0xFF059669)), background = listOf(Color(0xFFF0FDF4), Color(0xFFDCFCE7)))
-val SunsetLightPalette = LightPalette.copy(primary = listOf(Color(0xFFF59E0B), Color(0xFFEF4444)), background = listOf(Color(0xFFFFFBEB), Color(0xFFFEF3C7)))
-val OceanLightPalette = LightPalette.copy(primary = listOf(Color(0xFF0EA5E9), Color(0xFF3B82F6)), background = listOf(Color(0xFFF0F9FF), Color(0xFFE0F2FE)))
-val CyberLightPalette = LightPalette.copy(primary = listOf(Color(0xFFD946EF), Color(0xFF8B5CF6)), background = listOf(Color(0xFFFDF4FF), Color(0xFFFAE8FF)))
-
-val ForestDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFF34D399), Color(0xFF10B981)), background = listOf(Color(0xFF022C22), Color(0xFF064E3B)))
-val SunsetDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFFFBBF24), Color(0xFFF87171)), background = listOf(Color(0xFF451A03), Color(0xFF7F1D1D)))
-val OceanDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFF38BDF8), Color(0xFF60A5FA)), background = listOf(Color(0xFF082F49), Color(0xFF1E3A8A)))
-val CyberDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFFF0ABFC), Color(0xFFC084FC)), background = listOf(Color(0xFF2E1065), Color(0xFF4C1D95)))
+// 极光绿
+val ForestLightPalette = LightPalette.copy(primary = listOf(Color(0xFF48BB78), Color(0xFF68D391)), background = listOf(Color(0xFFF0FDF4), Color(0xFFDCFCE7)))
+val ForestDarkPalette = DarkPalette.copy(primary = listOf(Color(0xFF68D391), Color(0xFF48BB78)), background = listOf(Color(0xFF022C22), Color(0xFF064E3B)))
 
 val LocalPalette = staticCompositionLocalOf { LightPalette }
 
@@ -55,11 +51,8 @@ fun rememberPalette(): GradientPalette {
     val ctx = LocalContext.current
     val isDark = when (ThemeStore.get(ctx)) { ThemeStore.LIGHT -> false; ThemeStore.DARK -> true; else -> isSystemInDarkTheme() }
     return when (ThemeStore.getThemeStyle(ctx)) {
-        1 -> if (isDark) CoralDarkPalette else CoralLightPalette
+        1 -> if (isDark) RoseDarkPalette else RoseLightPalette
         2 -> if (isDark) ForestDarkPalette else ForestLightPalette
-        3 -> if (isDark) SunsetDarkPalette else SunsetLightPalette
-        4 -> if (isDark) OceanDarkPalette else OceanLightPalette
-        5 -> if (isDark) CyberDarkPalette else CyberLightPalette
         else -> if (isDark) DarkPalette else LightPalette
     }
 }

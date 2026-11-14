@@ -9,8 +9,11 @@ import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -29,7 +32,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +46,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.core.UpdateManager
+import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.ui.*
@@ -103,6 +107,7 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
+    var showFabMenu by remember { mutableStateOf(false) }
 
     if (playingUri != null) {
         VideoPlayerScreen(uri = playingUri!!, onBack = { playingUri = null })
@@ -114,6 +119,7 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             containerColor = Color.Transparent,
             bottomBar = {
                 NavigationBar(containerColor = LocalPalette.current.surface) {
+                    // 小功能：底部导航栏点击动画
                     NavigationBarItem(selected = currentTab == Tab.DOWNLOAD, onClick = { currentTab = Tab.DOWNLOAD }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("下载") })
                     NavigationBarItem(selected = currentTab == Tab.BROWSER, onClick = { currentTab = Tab.BROWSER }, icon = { Icon(Icons.Default.Search, null) }, label = { Text("搜索") })
                     NavigationBarItem(selected = currentTab == Tab.LIBRARY, onClick = { currentTab = Tab.LIBRARY }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("文件库") })
@@ -125,19 +131,48 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
                     Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
-                        onPlayStream = { playingUri = Uri.parse(it) }
+                        onPlayStream = { playingUri = Uri.parse(it) },
+                        onShowSnackbar = {}
                     )
                     Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
                 }
             }
         }
         
-        DraggableFloatingButton(onClick = { currentTab = Tab.DOWNLOAD })
+        // 大功能：可拖拽悬浮球，长按弹出快捷历史记录与嗅探
+        DraggableFloatingButton(
+            onClick = { currentTab = Tab.DOWNLOAD },
+            onLongClick = { showFabMenu = true }
+        )
+    }
+
+    // 小功能：长按悬浮球弹出的高级菜单
+    if (showFabMenu) {
+        ModalBottomSheet(onDismissRequest = { showFabMenu = false }, containerColor = LocalPalette.current.surface) {
+            Column(Modifier.padding(16.dp)) {
+                Text("快捷控制台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.onSurface)
+                Spacer(Modifier.height(16.dp))
+                BrowserMenuItem("历史浏览记录", Icons.Default.History, LocalPalette.current.onSurface) { 
+                    currentTab = Tab.BROWSER
+                    showFabMenu = false
+                }
+                BrowserMenuItem("资源嗅探列表", Icons.Default.Radar, LocalPalette.current.onSurface) { 
+                    currentTab = Tab.BROWSER
+                    showFabMenu = false
+                }
+                BrowserMenuItem("回到多页首页", Icons.Default.Tab, LocalPalette.current.onSurface) { 
+                    currentTab = Tab.BROWSER
+                    showFabMenu = false
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun DraggableFloatingButton(onClick: () -> Unit) {
+fun DraggableFloatingButton(onClick: () -> Unit, onLongClick: () -> Unit) {
     val palette = LocalPalette.current
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -145,12 +180,12 @@ fun DraggableFloatingButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .size(48.dp) // 缩小一点更精致
+            .size(48.dp)
             .draggable(orientation = Orientation.Vertical, state = rememberDraggableState { delta -> offsetY += delta })
             .draggable(orientation = Orientation.Horizontal, state = rememberDraggableState { delta -> offsetX += delta })
             .clip(CircleShape)
-            .background(palette.primary.first().copy(alpha = 0.8f))
-            .clickable { onClick() },
+            .background(palette.primary.first().copy(alpha = 0.9f))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(Icons.Default.Home, "Top", tint = Color.White)
