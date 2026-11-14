@@ -16,17 +16,16 @@ open class SafeWebViewClient(
     private val blockedSchemes = setOf("baiduboxapp", "baiduboxlite", "intent", "market", "tbopen")
     private val downloadExtensions = listOf(".mp4", ".mkv", ".mp3", ".m3u8", ".zip", ".rar", ".apk", ".pdf", ".exe")
 
-    // 功能 4：广告拦截黑名单
+    // 广告拦截黑名单
     private val adHosts = setOf(
         "doubleclick.net", "google-analytics.com", "googlesyndication.com",
         "cpro.baidu.com", "pos.baidu.com", "hm.baidu.com", "s.click.taobao.com",
         "uland.taobao.com", "cnzz.com", "umeng.com"
     )
 
+    // 修复：参数使用非空类型，与父类一致
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString().lowercase()
-        
-        // 拦截广告脚本/图片，返回空内容加速网页加载
         if (adHosts.any { url.contains(it) }) {
             return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
         }
@@ -40,12 +39,7 @@ open class SafeWebViewClient(
 
         if (scheme in blockedSchemes) return true
         if (downloadExtensions.any { url.contains(it, ignoreCase = true) }) {
-            if (url.contains(".m3u8")) {
-                // 如果发现 m3u8，弹出询问是在线播放还是下载
-                onPlayM3u8(url)
-            } else {
-                onDownloadRequest(url)
-            }
+            if (url.contains(".m3u8")) onPlayM3u8(url) else onDownloadRequest(url)
             return true 
         }
 

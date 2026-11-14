@@ -48,10 +48,7 @@ class MainActivity : ComponentActivity() {
             val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
             
-            LaunchedEffect(Unit) { 
-                // 自动检测更新
-                updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) 
-            }
+            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
 
             if (updateInfo != null) {
                 val ctx = LocalContext.current
@@ -89,16 +86,11 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     
-    // 播放器状态控制
-    var playingVideoFile by remember { mutableStateOf<File?>(null) }
-    var playingStreamUrl by remember { mutableStateOf<String?>(null) }
+    // 播放器状态 (支持本地文件和在线播放)
+    var playingUri by remember { mutableStateOf<Uri?>(null) }
 
-    if (playingVideoFile != null || playingStreamUrl != null) {
-        VideoPlayerScreen(
-            file = playingVideoFile, 
-            streamUrl = playingStreamUrl, 
-            onBack = { playingVideoFile = null; playingStreamUrl = null }
-        )
+    if (playingUri != null) {
+        VideoPlayerScreen(uri = playingUri!!, onBack = { playingUri = null })
         return
     }
 
@@ -123,10 +115,10 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
                 when (tab) {
                     Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
                     Tab.BROWSER -> BrowserScreen(
-                        onPlayVideo = { playingVideoFile = it },
-                        onPlayStream = { playingStreamUrl = it }
+                        onPlayVideo = { playingUri = Uri.fromFile(it) },
+                        onPlayStream = { playingUri = Uri.parse(it) }
                     )
-                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingVideoFile = it })
+                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
                 }
             }
         }

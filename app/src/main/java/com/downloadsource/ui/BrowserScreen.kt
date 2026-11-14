@@ -121,10 +121,11 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
 
                         webViewClient = object : SafeWebViewClient(
                             onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
-                            onPlayM3u8 = { url -> onPlayStream(url); } // 直接调用边下边播/在线播放
+                            onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
-                            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                                val url = request?.url.toString()
+                            // 修复：参数类型与父类严格一致
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                                val url = request.url.toString()
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip", "ts", "mkv", "avi") && !url.contains("favicon")) {
                                     if (!sniffedUrls.contains(url)) sniffedUrls.add(url)
@@ -169,7 +170,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 综合菜单...
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
@@ -184,7 +184,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 嗅探列表
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)) {
@@ -209,7 +208,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 历史记录和书签的弹窗保持原样...
     if (showHistoryList) {
         val history = BrowserHistoryStore.getHistory(ctx)
         Dialog(onDismissRequest = { showHistoryList = false }) {
