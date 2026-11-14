@@ -12,7 +12,6 @@ class Segmenter(
         .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 ) {
-
     data class Meta(val total: Long, val acceptsRange: Boolean)
 
     suspend fun probe(url: String): Meta = withContext(Dispatchers.IO) {
@@ -25,10 +24,6 @@ class Segmenter(
         }
     }
 
-    /**
-     * @param parts 片数（默认 8）
-     * @param onTick (downloaded, total, speed)
-     */
     suspend fun download(
         url: String,
         targetDir: File,
@@ -38,7 +33,7 @@ class Segmenter(
     ): File = coroutineScope {
         val meta = probe(url)
         val total = meta.total
-        if (total <= 0) error("Unknown content length")
+        if (total <= 0) error("无法获取文件大小")
 
         val tmpDir = File(targetDir, ".${fileName}.parts").apply { mkdirs() }
         val n = if (meta.acceptsRange && total > 4L shl 20) parts else 1
@@ -47,10 +42,9 @@ class Segmenter(
         var lastTick = System.currentTimeMillis()
         var lastBytes = 0L
 
-        // 全局进度 ticker
         val ticker = launch(Dispatchers.Default) {
             while (isActive) {
-                delay(200)
+                delay(300)
                 val now = System.currentTimeMillis()
                 val cur = downloaded.get()
                 val speed = if (now > lastTick) (cur - lastBytes) * 1000 / (now - lastTick) else 0
@@ -70,12 +64,10 @@ class Segmenter(
             }.awaitAll()
 
             ticker.cancel()
-
-            // 合并
             val partPaths = (0 until n).map { File(tmpDir, "$fileName.part$it").absolutePath }.toTypedArray()
             val out = File(targetDir, fileName)
             val ok = ZeroCore.mergeFiles(partPaths, out.absolutePath)
-            if (!ok) error("Merge failed")
+            if (!ok) error("合并文件失败")
             tmpDir.deleteRecursively()
             onTick(total, total, 0)
             out
@@ -86,28 +78,14 @@ class Segmenter(
     }
 
     private fun downloadRange(url: String, start: Long, end: Long, file: File, onDelta: (Long) -> Unit) {
-        val req = Request.Builder()
-            .url(url)
-            .header("Range", "bytes=$start-$end")
-            .build()
-
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
+        if (realStart > end) { onDelta(existing); return }
 
-        if (realStart > end) {
-            // 已经下完
-            onDelta(existing)
-            return
-        }
-
-        val realReq = Request.Builder()
-            .url(url)
-            .header("Range", "bytes=$realStart-$end")
-            .build()
-
-        client.newCall(realReq).execute().use { resp ->
-            if (!resp.isSuccessful && resp.code != 206) error("Range HTTP ${resp.code}")
-            val body = resp.body ?: error("Empty body")
+        val req = Request.Builder().url(url).header("Range", "bytes=$realStart-$end").build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful && resp.code != 206) error("下载失败 HTTP ${resp.code}")
+            val body = resp.body ?: error("响应为空")
             RandomAccessFile(file, "rw").use { raf ->
                 raf.seek(existing)
                 body.byteStream().use { ins ->

@@ -7,25 +7,22 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,15 +54,63 @@ class MainActivity : ComponentActivity() {
 
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
-                MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
-                    MainScreen(
-                        onPickFolder = { cb ->
-                            pickerResult = cb
-                            picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
-                        },
-                        onOpenSearch = { startActivity(Intent(this, SearchActivity::class.java)) },
-                        onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
+                MaterialTheme(
+                    colorScheme = if (isDark) darkColorScheme() else lightColorScheme(),
+                    typography = Typography(defaultFontFamily = FontFamily.SansSerif) // 修复手写体
+                ) {
+                    MainScaffold(
+                        onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
+                        onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) }
                     )
+                }
+            }
+        }
+    }
+}
+
+enum class Tab { DOWNLOAD, BROWSER }
+
+@Composable
+fun MainScaffold(
+    onPickFolder: ((Uri) -> Unit) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
+
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        bottomBar = {
+            NavigationBar(containerColor = LocalPalette.current.surface) {
+                NavigationBarItem(
+                    selected = currentTab == Tab.DOWNLOAD,
+                    onClick = { currentTab = Tab.DOWNLOAD },
+                    icon = { Icon(Icons.Default.Home, null) },
+                    label = { Text("下载") }
+                )
+                NavigationBarItem(
+                    selected = currentTab == Tab.BROWSER,
+                    onClick = { currentTab = Tab.BROWSER },
+                    icon = { Icon(Icons.Default.Search, null) },
+                    label = { Text("搜索") }
+                )
+            }
+        }
+    ) { padding ->
+        AnimatedContent(
+            targetState = currentTab,
+            transitionSpec = {
+                if (targetState.ordinal > initialState.ordinal) {
+                    (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it } + fadeOut())
+                } else {
+                    (slideInHorizontally { -it } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
+                }.using(SizeTransform(clip = false))
+            },
+            label = "tab"
+        ) { tab ->
+            Box(Modifier.padding(padding).fillMaxSize()) {
+                when (tab) {
+                    Tab.DOWNLOAD -> DownloadScreen(onPickFolder = onPickFolder, onOpenSettings = onOpenSettings)
+                    Tab.BROWSER -> BrowserScreen()
                 }
             }
         }
@@ -73,99 +118,81 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(
+fun DownloadScreen(
     onPickFolder: ((Uri) -> Unit) -> Unit,
-    onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
-
-    var urlInput by remember { mutableStateOf("") }
+    var showAddDialog by remember { mutableStateOf(false) }
+    
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     LifecycleResumeEffect(Unit) {
         dirPath = DirStore.resolveDownloadDir(ctx).absolutePath
         onPauseOrDispose {}
     }
 
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "${BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() }} · v${BuildConfig.VERSION_NAME}",
-                    color = palette.onSurfaceDim,
-                    style = MaterialTheme.typography.bodySmall
-                )
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(20.dp)) {
+            // 标题栏
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                    Text("${BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() }} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
             }
-            IconButton(onClick = onOpenSearch) { Icon(Icons.Default.Search, null, tint = palette.onSurface) }
-            IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
-        }
 
-        Spacer(Modifier.height(14.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("保存到", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                dirPath,
-                color = palette.onSurface,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1
-            )
-            TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) {
-                Icon(Icons.Default.Folder, null)
-                Spacer(Modifier.width(4.dp))
-                Text("更改")
+            Spacer(Modifier.height(10.dp))
+            
+            // 保存目录
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("保存到: ", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                Text(dirPath, color = palette.onSurface, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) {
+                    Text("更改")
+                }
             }
-        }
 
-        Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(10.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = urlInput,
-                onValueChange = { urlInput = it },
-                placeholder = { Text("粘贴下载链接") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                singleLine = true,
-                modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { submit(ctx, urlInput) { urlInput = "" } })
-            )
-            Spacer(Modifier.width(8.dp))
-            FilledIconButton(onClick = { submit(ctx, urlInput) { urlInput = "" } }, modifier = Modifier.size(52.dp)) {
-                Icon(Icons.Default.Add, null)
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        if (tasks.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无下载任务", color = palette.onSurfaceDim)
-            }
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(tasks, key = { it.id }) { task ->
-                    DownloadCard(
-                        task = task,
-                        onPause = { DownloadManager.pause(ctx, task.id) },
-                        onResume = { DownloadManager.start(ctx, task.id) },
-                        onDelete = { DownloadManager.remove(ctx, task.id) },
-                    )
+            // 列表
+            if (tasks.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无下载任务，点击右下角 + 添加", color = palette.onSurfaceDim)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
+                    items(tasks, key = { it.id }) { task ->
+                        DownloadCard(
+                            task = task,
+                            onPause = { DownloadManager.pause(ctx, task.id) },
+                            onResume = { DownloadManager.start(ctx, task.id) },
+                            onDelete = { DownloadManager.remove(ctx, task.id) },
+                        )
+                    }
                 }
             }
         }
-    }
-}
 
-private fun submit(ctx: android.content.Context, raw: String, onDone: () -> Unit) {
-    val url = raw.trim()
-    if (url.isBlank()) return
-    val dir: File = DirStore.resolveDownloadDir(ctx)
-    DownloadManager.add(ctx, url, dir)
-    onDone()
+        // FAB
+        FloatingActionButton(
+            onClick = { showAddDialog = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            containerColor = palette.primary.first()
+        ) {
+            Text("+", style = MaterialTheme.typography.headlineMedium, color = androidx.compose.ui.graphics.Color.White)
+        }
+    }
+
+    if (showAddDialog) {
+        AddTaskDialog(
+            onDismiss = { showAddDialog = false },
+            onConfirm = { url, name, threads ->
+                DownloadManager.add(ctx, url, name, threads, File(DirStore.resolveDownloadDir(ctx).absolutePath))
+                showAddDialog = false
+            }
+        )
+    }
 }

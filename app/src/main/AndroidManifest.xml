@@ -24,23 +24,12 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-            </intent-filter>
         </activity>
 
         <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".ui.SearchActivity" android:exported="false" />
         <activity android:name=".ui.SourceManageActivity" android:exported="false" />
         <activity android:name=".CrashActivity" android:exported="false" />
 
-        <service
-            android:name=".core.DownloadService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
+        <service android:name=".core.DownloadService" android:foregroundServiceType="dataSync" android:exported="false" />
     </application>
 </manifest>

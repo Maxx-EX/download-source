@@ -9,6 +9,7 @@ data class DownloadTask(
     val url: String,
     val fileName: String,
     val dirPath: String = "",
+    val threads: Int = 8,
     val totalBytes: Long = 0L,
     val downloadedBytes: Long = 0L,
     val speed: Long = 0L,

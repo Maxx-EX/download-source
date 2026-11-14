@@ -20,9 +20,9 @@ object DownloadManager {
         _tasks.value = TaskStore.load(context)
     }
 
-    fun add(context: Context, url: String, dir: File) {
-        val name = guessName(url)
-        val task = DownloadTask(url = url, fileName = name, dirPath = dir.absolutePath)
+    fun add(context: Context, url: String, customName: String?, threads: Int, dir: File) {
+        val name = if (!customName.isNullOrBlank()) customName else guessName(url)
+        val task = DownloadTask(url = url, fileName = name, dirPath = dir.absolutePath, threads = threads)
         _tasks.value = _tasks.value + task
         TaskStore.save(context, _tasks.value)
         DownloadService.start(context)
@@ -39,23 +39,18 @@ object DownloadManager {
             try {
                 val dir = File(t.dirPath)
                 if (!dir.exists()) dir.mkdirs()
-                val out = segmenter.download(t.url, dir, t.fileName) { d, total, speed ->
+                val out = segmenter.download(t.url, dir, t.fileName, parts = t.threads) { d, total, speed ->
                     update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                 }
                 update(context, id) {
-                    it.copy(
-                        status = TaskStatus.Completed,
-                        downloadedBytes = it.totalBytes,
-                        speed = 0,
-                        outputPath = out.absolutePath
-                    )
+                    it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath)
                 }
                 if (_tasks.value.none { it.status == TaskStatus.Running }) DownloadService.stop(context)
             } catch (e: CancellationException) {
                 update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
                 throw e
             } catch (e: Exception) {
-                update(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "unknown", speed = 0) }
+                update(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "未知错误", speed = 0) }
                 if (_tasks.value.none { it.status == TaskStatus.Running }) DownloadService.stop(context)
             }
         }
