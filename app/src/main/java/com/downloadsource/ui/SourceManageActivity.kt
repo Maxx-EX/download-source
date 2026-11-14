@@ -22,10 +22,10 @@ class SourceManageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val isDark = rememberDark()
-            val palette = if (isDark) DarkPalette else LightPalette
+            // 使用新的 rememberPalette 替代旧的 rememberDark
+            val palette = rememberPalette()
             GradientBackground(palette) {
-                MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
+                MaterialTheme {
                     SourceScreen()
                 }
             }
@@ -41,7 +41,7 @@ fun SourceScreen() {
     var input by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Text("镜像源管理", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("镜像源管理", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
         Text("GitHub 链接会自动套用首个镜像前缀；点击删除可移除。", color = palette.onSurfaceDim)
         Spacer(Modifier.height(14.dp))
 
@@ -69,8 +69,7 @@ fun SourceScreen() {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(list) { m ->
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -81,7 +80,7 @@ fun SourceScreen() {
                     IconButton(onClick = {
                         list = list - m
                         MirrorResolver.save(ctx, list)
-                    }) { Icon(Icons.Default.Delete, null) }
+                    }) { Icon(Icons.Default.Delete, null, tint = palette.onSurface) }
                 }
             }
         }

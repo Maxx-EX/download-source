@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,7 +74,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                             val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME)
                             checking = false
                             if (info != null) {
-                                UpdateManager.openDownload(ctx, info.downloadUrl)
+                                UpdateManager.showUpdateDialog(ctx, info)
                             } else {
                                 Toast.makeText(ctx, "当前已是最新版 (●'◡'●)", Toast.LENGTH_SHORT).show()
                             }
