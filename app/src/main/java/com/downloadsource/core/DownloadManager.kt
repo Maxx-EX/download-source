@@ -45,7 +45,6 @@ object DownloadManager {
                     else throw Exception("网盘解析为内测功能，请下载 Zeta 版体验")
                 } else url
                 
-                // 功能 2：自动解析 GitHub 镜像加速
                 parsedUrl = MirrorResolver.resolveFastest(context, parsedUrl)
 
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName
@@ -71,13 +70,16 @@ object DownloadManager {
         jobs[id] = scope.launch {
             try {
                 val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
-                val out = segmenter.download(t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
+                // 传入 task.id 以支持中断底层 Socket
+                val out = segmenter.download(t.id, t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
                     update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
                 update(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
                 checkPending(context)
             } catch (e: CancellationException) {
+                // 取消时立即调用 segmenter 释放 socket
+                segmenter.cancelTask(t.id)
                 update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
                 throw e
             } catch (e: Exception) {
@@ -96,6 +98,8 @@ object DownloadManager {
     }
 
     fun pause(context: Context, id: String) {
+        // 中断底层的 OkHttp Call
+        segmenter.cancelTask(id)
         jobs[id]?.cancel(); jobs.remove(id)
         update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
         checkPending(context)
@@ -113,6 +117,7 @@ object DownloadManager {
     }
 
     fun remove(context: Context, id: String) {
+        segmenter.cancelTask(id)
         jobs[id]?.cancel(); jobs.remove(id)
         _tasks.value = _tasks.value.filterNot { it.id == id }
         TaskStore.save(context, _tasks.value)
