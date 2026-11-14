@@ -18,9 +18,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class Segmenter(
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
 ) {
     suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         if (url.contains(".m3u8") || url.contains(".m3u")) {
@@ -77,7 +75,16 @@ class Segmenter(
     private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong) {
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
-        if (realStart > end) return
+        
+        // 修复 1：如果已经下完，补上进度并跳过
+        if (realStart > end) {
+            downloaded.addAndGet(existing)
+            return
+        }
+        
+        // 修复 2：把已下载的大小计入计数器，防止暂停恢复后进度归零
+        downloaded.addAndGet(existing)
+        
         val req = Request.Builder().url(url).header("Range", "bytes=$realStart-$end").build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful && resp.code != 206) error("分片失败 HTTP ${resp.code}")
@@ -96,32 +103,8 @@ class Segmenter(
         }
     }
 
-    // 智能解析 M3U8 并进行 TS 到 MP4 无损重封装
     private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
-        val m3u8Text = withContext(Dispatchers.IO) {
-            client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
-        }
-        val lines = m3u8Text.lines()
-        var aesKey: ByteArray? = null
-        var iv: ByteArray? = null
-
-        // 解析加密 Key
-        lines.find { it.startsWith("#EXT-X-KEY:") }?.let { keyLine ->
-            if (keyLine.contains("METHOD=AES-128")) {
-                val keyUri = Regex("URI=\"(.*?)\"").find(keyLine)?.groupValues?.get(1)
-                val ivStr = Regex("IV=0x(.*?)(,|$)").find(keyLine)?.groupValues?.get(1)
-                if (keyUri != null) {
-                    aesKey = withContext(Dispatchers.IO) {
-                        client.newCall(Request.Builder().url(if (keyUri.startsWith("http")) keyUri else url.substringBeforeLast('/') + "/" + keyUri).build()).execute().use { it.body?.bytes() }
-                    }
-                    if (ivStr != null) iv = hexStringToByteArray(ivStr)
-                }
-            }
-        }
-
-        val tsUrls = lines.filter { it.isNotBlank() && !it.startsWith("#") }
-            .map { if (it.startsWith("http")) it else url.substringBeforeLast('/') + "/" + it }
-        
+        val tsUrls = extractTsUrls(url, mutableSetOf())
         if (tsUrls.isEmpty()) error("M3U8 解析为空")
         
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
@@ -139,17 +122,7 @@ class Segmenter(
                     val partFile = File(tmpDir, "$index.ts")
                     if (!partFile.exists()) {
                         client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp ->
-                            var bytes = resp.body?.bytes() ?: ByteArray(0)
-                            if (aesKey != null) {
-                                val useIv = iv ?: ByteArray(16).apply { 
-                                    // 如果没有指定IV，默认使用序号作为IV (标准要求)
-                                    val seq = index
-                                    this[12] = (seq shr 24).toByte(); this[13] = (seq shr 16).toByte()
-                                    this[14] = (seq shr 8).toByte(); this[15] = seq.toByte()
-                                }
-                                bytes = decryptAES(bytes, aesKey!!, useIv)
-                            }
-                            partFile.writeBytes(bytes)
+                            partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0))
                         }
                     }
                     downloaded.incrementAndGet()
@@ -162,7 +135,6 @@ class Segmenter(
         val partPaths = tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray()
         if (!ZeroCore.mergeFiles(partPaths, mergedTs.absolutePath)) error("合并 TS 失败")
 
-        // 无损转换 MP4
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         withContext(Dispatchers.IO) { remuxTsToMp4(mergedTs, outMp4) }
 
@@ -172,19 +144,26 @@ class Segmenter(
         outMp4
     }
 
-    private fun decryptAES(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
-        return try {
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
-            cipher.doFinal(data)
-        } catch (e: Exception) { data } // 解密失败原样返回
-    }
+    // 修复 3：递归解析嵌套的 M3U8 子列表，防死循环
+    private suspend fun extractTsUrls(url: String, visited: MutableSet<String>): List<String> = withContext(Dispatchers.IO) {
+        if (visited.contains(url)) return@withContext emptyList()
+        visited.add(url)
 
-    private fun hexStringToByteArray(s: String): ByteArray {
-        val len = s.length
-        val data = ByteArray(len / 2)
-        for (i in 0 until len step 2) data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
-        return data
+        val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
+        val lines = text.lines()
+        val urls = mutableListOf<String>()
+        
+        for (line in lines) {
+            if (line.isNotBlank() && !line.startsWith("#")) {
+                val absUrl = if (line.startsWith("http")) line else url.substringBeforeLast('/') + "/" + line
+                if (absUrl.contains(".m3u8")) {
+                    urls.addAll(extractTsUrls(absUrl, visited)) // 递归展开
+                } else {
+                    urls.add(absUrl)
+                }
+            }
+        }
+        return@withContext urls
     }
 
     private fun remuxTsToMp4(input: File, output: File) {
@@ -207,7 +186,6 @@ class Segmenter(
             }
             muxer.start()
 
-            var offset = 0L
             while (true) {
                 info.size = extractor.readSampleData(buffer, 0)
                 if (info.size < 0) break

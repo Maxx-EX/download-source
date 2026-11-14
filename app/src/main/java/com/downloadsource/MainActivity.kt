@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
+import com.downloadsource.core.UpdateManager
 import com.downloadsource.storage.DirStore
 import com.downloadsource.ui.*
 import java.io.File
@@ -44,13 +46,26 @@ class MainActivity : ComponentActivity() {
         val sharedText = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
 
         setContent {
-            // 修复：直接读取系统深色模式和用户设置
             val systemDark = isSystemInDarkTheme()
             val themeMode = ThemeStore.get(this)
             val isDark = when (themeMode) {
                 ThemeStore.LIGHT -> false
                 ThemeStore.DARK -> true
                 else -> systemDark
+            }
+
+            var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+
+            if (updateInfo != null) {
+                val ctx = LocalContext.current
+                AlertDialog(
+                    onDismissRequest = { updateInfo = null },
+                    title = { Text("发现新版本 v${updateInfo?.version}") },
+                    text = { Text(updateInfo?.changelog ?: "修复已知问题，提升下载体验。") },
+                    confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
+                    dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
+                )
             }
 
             val colorScheme = if (isDark) {
@@ -61,7 +76,6 @@ class MainActivity : ComponentActivity() {
 
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
-                // 修复：移除无用的 typography 参数
                 MaterialTheme(colorScheme = colorScheme) {
                     MainScaffold(
                         initialShareUrl = sharedText,
@@ -74,17 +88,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab { DOWNLOAD, BROWSER }
+enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 
 @Composable
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
+    var playingVideo by remember { mutableStateOf<File?>(null) }
+
+    if (playingVideo != null) {
+        VideoPlayerScreen(file = playingVideo!!, onBack = { playingVideo = null })
+        return
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
             NavigationBar(containerColor = LocalPalette.current.surface) {
                 NavigationBarItem(selected = currentTab == Tab.DOWNLOAD, onClick = { currentTab = Tab.DOWNLOAD }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("下载") })
                 NavigationBarItem(selected = currentTab == Tab.BROWSER, onClick = { currentTab = Tab.BROWSER }, icon = { Icon(Icons.Default.Search, null) }, label = { Text("搜索") })
+                NavigationBarItem(selected = currentTab == Tab.LIBRARY, onClick = { currentTab = Tab.LIBRARY }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("文件库") })
             }
         }
     ) { padding ->
@@ -102,6 +124,7 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
                 when (tab) {
                     Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
                     Tab.BROWSER -> BrowserScreen()
+                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingVideo = it })
                 }
             }
         }
@@ -145,17 +168,7 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
                             onPause = { DownloadManager.pause(ctx, task.id) }, 
                             onResume = { DownloadManager.start(ctx, task.id) }, 
                             onDelete = { DownloadManager.remove(ctx, task.id) },
-                            onOpen = {
-                                val file = File(task.outputPath ?: "")
-                                if (file.exists()) {
-                                    val uri = androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-                                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                                        setDataAndType(uri, ctx.contentResolver.getType(uri) ?: "*/*")
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    try { ctx.startActivity(intent) } catch (e: Exception) { android.widget.Toast.makeText(ctx, "无法打开文件", android.widget.Toast.LENGTH_SHORT).show() }
-                                }
-                            }
+                            onOpen = { }
                         )
                     }
                 }

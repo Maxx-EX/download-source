@@ -10,7 +10,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -36,55 +35,27 @@ fun AddTaskDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(palette.surface)
-                .border(
-                    width = 1.dp,
-                    brush = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))),
-                    shape = RoundedCornerShape(28.dp)
-                )
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(palette.surface)
+                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(28.dp))
                 .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("新建下载任务", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
 
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("下载链接") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
-            )
-
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("文件名 (选填)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)),
-                placeholder = { Text("留空则自动识别") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) })
-            )
+            OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("下载链接") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("文件名 (选填)") }, singleLine = true, modifier = Modifier.fillMaxWidth(), placeholder = { Text("留空自动解析") })
 
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("下载线程数", color = palette.onSurface)
+                    Text("线程数", color = palette.onSurface, style = MaterialTheme.typography.bodyMedium)
                     Text("${threads.toInt()}", color = palette.primary.first(), fontWeight = FontWeight.Bold)
                 }
                 Slider(value = threads, onValueChange = { threads = it }, valueRange = 1f..16f, steps = 15)
             }
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                    Text("取消", color = palette.onSurfaceDim)
-                }
-                Button(onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) }, modifier = Modifier.weight(1f), enabled = url.isNotBlank()) {
-                    Text("开始下载")
-                }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", color = palette.onSurfaceDim) }
+                Button(onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) }, modifier = Modifier.weight(1f), enabled = url.isNotBlank()) { Text("下载") }
             }
         }
     }
