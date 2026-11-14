@@ -46,7 +46,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+            
+            // 修复：改为传入 VERSION_CODE
+            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_CODE) }
 
             if (updateInfo != null) {
                 val ctx = LocalContext.current

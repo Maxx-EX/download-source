@@ -78,7 +78,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                     if (!checking) {
                         checking = true
                         scope.launch {
-                            val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME)
+                            val info = UpdateManager.checkUpdate(BuildConfig.VERSION_CODE)
                             checking = false
                             if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版 (●'◡'●)", Toast.LENGTH_SHORT).show()
                         }

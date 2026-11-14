@@ -2,6 +2,7 @@ package com.downloadsource.ui
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.webkit.*
 import androidx.activity.compose.BackHandler
@@ -44,8 +45,9 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
-    // 修复：使用 MutableSet 自动去重并限制上限
-    val sniffedUrls = remember { mutableStateSetOf<String>() }
+    
+    // 替换为 mutableStateListOf 去重
+    val sniffedUrls = remember { mutableStateListOf<String>() }
     
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
@@ -85,7 +87,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        // WebView 安全基线与多窗口支持
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -102,7 +103,10 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                                 
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
-                                    if (sniffedUrls.size < 50) sniffedUrls.add(url)
+                                    // 修复：去重并且限制最大数量
+                                    if (!sniffedUrls.contains(url) && sniffedUrls.size < 50) {
+                                        sniffedUrls.add(url)
+                                    }
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
@@ -115,7 +119,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
                         // 支持文件选择
                         webChromeClient = object : WebChromeClient() {
                             override fun onShowFileChooser(webView: WebView?, filePathCallback: ValueCallback<Array<Uri>>?, fileChooserParams: FileChooserParams?): Boolean {
-                                // 可接入 ActivityResultLauncher 实现文件选择，此处直接返回 false 放行默认（如果有）
                                 return false 
                             }
                         }
@@ -141,7 +144,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
         Dialog(onDismissRequest = { showSniffList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
                 LazyColumn {
-                    items(sniffedUrls.toList()) { url ->
+                    items(sniffedUrls) { url ->
                         Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
                             Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -157,8 +160,4 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit) {
             showDownloadDialog = false
         }
     }
-}
-
-fun <T> mutableStateSetOf(): MutableSet<T> {
-    return androidx.compose.runtime.mutableStateSetOf<T>()
 }
