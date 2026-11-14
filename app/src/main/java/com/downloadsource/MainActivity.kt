@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -41,15 +41,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // 捕获系统分享传入的链接
         val sharedText = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
 
         setContent {
-            var isDark by remember { mutableStateOf(rememberDark()) }
-            LifecycleResumeEffect(Unit) { isDark = rememberDark(); onPauseOrDispose {} }
-            
-            // Android 12+ 动态取色
+            // 修复：直接读取系统深色模式和用户设置
+            val systemDark = isSystemInDarkTheme()
+            val themeMode = ThemeStore.get(this)
+            val isDark = when (themeMode) {
+                ThemeStore.LIGHT -> false
+                ThemeStore.DARK -> true
+                else -> systemDark
+            }
+
             val colorScheme = if (isDark) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(this) else darkColorScheme()
             } else {
@@ -58,7 +61,8 @@ class MainActivity : ComponentActivity() {
 
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
-                MaterialTheme(colorScheme = colorScheme, typography = Typography(defaultFontFamily = FontFamily.SansSerif)) {
+                // 修复：移除无用的 typography 参数
+                MaterialTheme(colorScheme = colorScheme) {
                     MainScaffold(
                         initialShareUrl = sharedText,
                         onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
@@ -74,8 +78,7 @@ enum class Tab { DOWNLOAD, BROWSER }
 
 @Composable
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
-    var currentTab by remember { mutableStateOf(if (initialShareUrl != null) Tab.DOWNLOAD else Tab.DOWNLOAD) }
-    
+    var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {

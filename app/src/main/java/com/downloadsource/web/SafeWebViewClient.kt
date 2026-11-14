@@ -6,7 +6,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 
-class SafeWebViewClient(
+// 修复：加上 open 关键字，允许被匿名对象继承
+open class SafeWebViewClient(
     private val onDownloadRequest: (String) -> Unit = {}
 ) : WebViewClient() {
 
@@ -22,10 +23,9 @@ class SafeWebViewClient(
         if (scheme in blockedSchemes) return true
         if (blockedHosts.any { uri.host?.endsWith(it) == true }) return true
 
-        // 嗅探下载链接
         if (downloadExtensions.any { url.contains(it, ignoreCase = true) }) {
             onDownloadRequest(url)
-            return true // 拦截跳转，交给下载器
+            return true 
         }
 
         if (scheme == "http" || scheme == "https") return false

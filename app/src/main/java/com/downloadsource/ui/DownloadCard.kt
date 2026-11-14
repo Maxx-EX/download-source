@@ -1,9 +1,14 @@
 package com.downloadsource.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,12 +26,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.downloadsource.core.DownloadTask
 import com.downloadsource.core.TaskStatus
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DownloadCard(
     task: DownloadTask,
@@ -37,35 +44,57 @@ fun DownloadCard(
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalPalette.current
-    Row(
-        modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(palette.surface)
-            .clickable(enabled = task.status == TaskStatus.Completed) { onOpen() }
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ProgressRing(task.fraction, task.status == TaskStatus.Running, task.status == TaskStatus.Completed, palette.primary)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                when (task.status) {
-                    TaskStatus.Failed -> "失败：${task.error ?: ""}"
-                    TaskStatus.Completed -> "已完成 (点击打开)"
-                    TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
-                    else -> "${task.sizeText} · ${task.threads}线程 ${if (task.speedText.isNotEmpty()) "· ${task.speedText}" else ""}"
-                },
-                color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    val ctx = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box {
+        Row(
+            modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(palette.surface)
+                .combinedClickable(
+                    onClick = { if (task.status == TaskStatus.Completed) onOpen() },
+                    onLongClick = { showMenu = true } // 新增：长按弹出菜单
+                )
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ProgressRing(task.fraction, task.status == TaskStatus.Running, task.status == TaskStatus.Completed, palette.primary)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    when (task.status) {
+                        TaskStatus.Failed -> "失败：${task.error ?: ""}"
+                        TaskStatus.Completed -> "已完成 (点击打开 · 长按复制链接)"
+                        TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
+                        else -> "${task.sizeText} · ${task.threads}线程 ${if (task.speedText.isNotEmpty()) "· ${task.speedText}" else ""}"
+                    },
+                    color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (task.status != TaskStatus.Completed) {
+                IconButton(onClick = { if (task.status == TaskStatus.Running) onPause() else onResume() }) {
+                    Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onSurface)
+                }
+            }
+            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
+        }
+
+        // 长按菜单
+        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(
+                text = { Text("复制下载链接") },
+                onClick = {
+                    val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Download Link", task.url)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(ctx, "链接已复制 (๑•̀ㅂ•́)و✧", Toast.LENGTH_SHORT).show()
+                    showMenu = false
+                }
             )
         }
-        if (task.status != TaskStatus.Completed) {
-            IconButton(onClick = { if (task.status == TaskStatus.Running) onPause() else onResume() }) {
-                Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onSurface)
-            }
-        }
-        IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
     }
 }
 
