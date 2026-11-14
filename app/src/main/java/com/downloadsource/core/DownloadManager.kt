@@ -15,14 +15,24 @@ object DownloadManager {
     private val segmenter = Segmenter()
     private val jobs = mutableMapOf<String, Job>()
     private val httpClient = OkHttpClient()
-    private const val MAX_CONCURRENT = 3 // 并发下载数
+    private const val MAX_CONCURRENT = 3
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
 
     fun init(context: Context) {
         _tasks.value = TaskStore.load(context)
+        // 核心功能：App 重启时，把所有未完成的任务标记为 Pending，等待网络恢复自动继续
+        _tasks.value.forEach { t ->
+            if (t.status == TaskStatus.Running) update(context, t.id) { it.copy(status = TaskStatus.Pending, speed = 0) }
+        }
         NetworkMonitor.start(context)
+    }
+
+    fun autoResumeTasks(context: Context) {
+        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach {
+            startTask(context, it.id)
+        }
     }
 
     fun add(context: Context, url: String, customName: String?, threads: Int, dir: File) {
@@ -103,9 +113,7 @@ object DownloadManager {
 
     private fun probeRealFileName(url: String): String {
         try {
-            // 如果是 m3u8 或 ts，直接命名
             if (url.contains(".m3u8") || url.endsWith(".ts", true)) return "video_${System.currentTimeMillis()}.mp4"
-            
             val req = Request.Builder().url(url).head().build()
             httpClient.newCall(req).execute().use { resp ->
                 val disposition = resp.header("Content-Disposition")

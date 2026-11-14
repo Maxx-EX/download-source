@@ -8,7 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,35 +45,31 @@ class MainActivity : ComponentActivity() {
         val sharedText = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
 
         setContent {
-            val systemDark = isSystemInDarkTheme()
-            val themeMode = ThemeStore.get(this)
-            val isDark = when (themeMode) {
-                ThemeStore.LIGHT -> false
-                ThemeStore.DARK -> true
-                else -> systemDark
-            }
-
+            val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+            
+            LaunchedEffect(Unit) { 
+                // 自动检测更新
+                updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) 
+            }
 
             if (updateInfo != null) {
                 val ctx = LocalContext.current
                 AlertDialog(
                     onDismissRequest = { updateInfo = null },
-                    title = { Text("发现新版本 v${updateInfo?.version}") },
-                    text = { Text(updateInfo?.changelog ?: "修复已知问题，提升下载体验。") },
+                    title = { Text("发现新版本 v${updateInfo?.version} 🎉") },
+                    text = { Text(updateInfo?.changelog ?: "优化了下载与播放体验。") },
                     confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
                     dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
                 )
             }
 
-            val colorScheme = if (isDark) {
+            val colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(this) else darkColorScheme()
             } else {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(this) else lightColorScheme()
             }
 
-            val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
                 MaterialTheme(colorScheme = colorScheme) {
                     MainScaffold(
@@ -93,10 +88,17 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 @Composable
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
-    var playingVideo by remember { mutableStateOf<File?>(null) }
+    
+    // 播放器状态控制
+    var playingVideoFile by remember { mutableStateOf<File?>(null) }
+    var playingStreamUrl by remember { mutableStateOf<String?>(null) }
 
-    if (playingVideo != null) {
-        VideoPlayerScreen(file = playingVideo!!, onBack = { playingVideo = null })
+    if (playingVideoFile != null || playingStreamUrl != null) {
+        VideoPlayerScreen(
+            file = playingVideoFile, 
+            streamUrl = playingStreamUrl, 
+            onBack = { playingVideoFile = null; playingStreamUrl = null }
+        )
         return
     }
 
@@ -113,18 +115,18 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
         AnimatedContent(
             targetState = currentTab,
             transitionSpec = {
-                if (targetState.ordinal > initialState.ordinal) {
-                    (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it } + fadeOut())
-                } else {
-                    (slideInHorizontally { -it } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
-                }.using(SizeTransform(clip = false))
+                if (targetState.ordinal > initialState.ordinal) (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it } + fadeOut())
+                else (slideInHorizontally { -it } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
             }, label = "tab"
         ) { tab ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (tab) {
                     Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
-                    Tab.BROWSER -> BrowserScreen()
-                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingVideo = it })
+                    Tab.BROWSER -> BrowserScreen(
+                        onPlayVideo = { playingVideoFile = it },
+                        onPlayStream = { playingStreamUrl = it }
+                    )
+                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingVideoFile = it })
                 }
             }
         }

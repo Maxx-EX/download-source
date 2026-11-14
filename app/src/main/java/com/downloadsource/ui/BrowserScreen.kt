@@ -1,7 +1,6 @@
 package com.downloadsource.ui
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.webkit.*
@@ -41,20 +40,20 @@ import com.downloadsource.storage.BookmarkStore
 import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
+import com.downloadsource.web.SafeWebViewClient
+import java.io.File
 import java.net.URLEncoder
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen(modifier: Modifier = Modifier) {
+fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     
     var webView by remember { mutableStateOf<WebView?>(null) }
-    // 功能 1：会话恢复，初始读取上次保存的链接
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
-    
     var progress by remember { mutableFloatStateOf(0f) }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
@@ -63,7 +62,6 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
     var pendingDownloadUrl by remember { mutableStateOf("") }
     val sniffedUrls = remember { mutableStateListOf<String>() }
     
-    // 控制各种面板的显示
     var showMenuSheet by remember { mutableStateOf(false) }
     var showSniffList by remember { mutableStateOf(false) }
     var showHistoryList by remember { mutableStateOf(false) }
@@ -75,16 +73,11 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // 地址栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    placeholder = { Text("搜索或输入网址") },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    value = urlInput, onValueChange = { urlInput = it }, placeholder = { Text("搜索或输入网址") }, leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = { if (urlInput.isNotEmpty()) IconButton(onClick = { urlInput = "" }) { Icon(Icons.Default.Close, null) } },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(24.dp)),
+                    singleLine = true, modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(24.dp)),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = {
                         var q = urlInput.trim()
@@ -92,11 +85,7 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                             val engine = BrowserPrefs.getEngine(ctx)
                             val target = if (q.startsWith("http")) q else {
                                 q = URLEncoder.encode(q, "UTF-8")
-                                when (engine) {
-                                    "Baidu" -> "https://www.baidu.com/s?wd=$q"
-                                    "Google" -> "https://www.google.com/search?q=$q"
-                                    else -> "https://www.bing.com/search?q=$q"
-                                }
+                                when (engine) { "Baidu" -> "https://www.baidu.com/s?wd=$q"; "Google" -> "https://www.google.com/search?q=$q"; else -> "https://www.bing.com/search?q=$q" }
                             }
                             webView?.loadUrl(target)
                             urlInput = target
@@ -105,7 +94,6 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                 )
             }
 
-            // 操作栏 (左侧导航，右侧菜单)
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row {
                     IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (canGoBack) palette.onSurface else palette.onSurfaceDim) }
@@ -113,14 +101,7 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                     IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, null, tint = palette.onSurface) }
                 }
                 Row {
-                    // 快捷收藏
-                    IconButton(onClick = { 
-                        if (currentUrl.isNotBlank()) {
-                            BookmarkStore.add(ctx, currentUrl)
-                            android.widget.Toast.makeText(ctx, "已加入书签", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }) { Icon(Icons.Default.Star, null, tint = if (BookmarkStore.get(ctx).contains(currentUrl)) Color(0xFFFFD700) else palette.onSurface) }
-                    // 综合菜单
+                    IconButton(onClick = { if (currentUrl.isNotBlank()) { BookmarkStore.add(ctx, currentUrl); android.widget.Toast.makeText(ctx, "已加入书签", android.widget.Toast.LENGTH_SHORT).show() } }) { Icon(Icons.Default.Star, null, tint = if (BookmarkStore.get(ctx).contains(currentUrl)) Color(0xFFFFD700) else palette.onSurface) }
                     IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
                 }
             }
@@ -134,12 +115,14 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         
-                        // 功能 4：强制夜间模式 (API 29+)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             settings.forceDark = if (isDarkMode) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
                         }
 
-                        webViewClient = object : WebViewClient() {
+                        webViewClient = object : SafeWebViewClient(
+                            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
+                            onPlayM3u8 = { url -> onPlayStream(url); } // 直接调用边下边播/在线播放
+                        ) {
                             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                                 val url = request?.url.toString()
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
@@ -150,15 +133,11 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                             }
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                if (url != null && !url.startsWith("javascript")) { 
-                                    urlInput = url
-                                    currentUrl = url
-                                    BrowserHistoryStore.saveSession(ctx, url) // 保存会话
-                                }
+                                if (url != null && !url.startsWith("javascript")) { urlInput = url; currentUrl = url; BrowserHistoryStore.saveSession(ctx, url) }
                             }
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                if (url != null) BrowserHistoryStore.addHistory(ctx, url) // 功能 2：存历史
+                                if (url != null) BrowserHistoryStore.addHistory(ctx, url)
                             }
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                 super.doUpdateVisitedHistory(view, url, isReload)
@@ -174,7 +153,6 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                 },
                 update = { 
                     webView = it 
-                    // 动态应用夜间模式
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         it.settings.forceDark = if (isDarkMode) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
                         it.reload()
@@ -184,7 +162,6 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        // 嗅探悬浮球 (仅在抓到资源时显示)
         AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
             FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first(), shape = RoundedCornerShape(16.dp)) {
                 Box { Icon(Icons.Default.Layers, "Sniffed", tint = Color.White); Box(Modifier.size(10.dp).background(Color.Red, RoundedCornerShape(50)).align(Alignment.TopEnd)) }
@@ -192,43 +169,22 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // 综合控制菜单
+    // 综合菜单...
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
                 Text("浏览器操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface, modifier = Modifier.padding(bottom = 12.dp))
-                
-                BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) {
-                    webView?.loadUrl("https://www.bing.com")
-                    showMenuSheet = false
-                }
-                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) {
-                    showHistoryList = true
-                    showMenuSheet = false
-                }
-                BrowserMenuItem("我的书签", Icons.Default.Bookmarks, palette.onSurface) {
-                    showBookmarkList = true
-                    showMenuSheet = false
-                }
-                BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) {
-                    isDarkMode = !isDarkMode
-                    showMenuSheet = false
-                }
-                // 功能 5：一键分享网页
-                BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) {
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, currentUrl)
-                    }
-                    ctx.startActivity(Intent.createChooser(intent, "分享网页"))
-                    showMenuSheet = false
-                }
+                BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) { webView?.loadUrl("https://www.bing.com"); showMenuSheet = false }
+                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
+                BrowserMenuItem("我的书签", Icons.Default.Bookmarks, palette.onSurface) { showBookmarkList = true; showMenuSheet = false }
+                BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) { isDarkMode = !isDarkMode; showMenuSheet = false }
+                BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, currentUrl) }, "分享网页")); showMenuSheet = false }
                 Spacer(Modifier.height(16.dp))
             }
         }
     }
 
-    // 嗅探列表弹窗
+    // 嗅探列表
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)) {
@@ -239,9 +195,13 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(sniffedUrls) { url ->
                         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(palette.onSurface.copy(alpha = 0.05f)).clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.InsertDriveFile, null, tint = palette.primary.first())
+                            val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
+                            Icon(when(ext) { "mp4", "mkv", "avi" -> Icons.Default.VideoFile; "mp3" -> Icons.Default.AudioFile; "apk" -> Icons.Default.Android; else -> Icons.Default.InsertDriveFile }, null, tint = palette.primary.first())
                             Spacer(Modifier.width(12.dp))
-                            Text(url.substringAfterLast('/').substringBefore('?'), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                            Text(url.substringAfterLast('/').substringBefore('?'), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                            if (url.contains(".m3u8") || url.contains(".mp4")) {
+                                TextButton(onClick = { onPlayStream(url); showSniffList = false }) { Text("播放") }
+                            }
                         }
                     }
                 }
@@ -249,7 +209,7 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // 历史记录弹窗
+    // 历史记录和书签的弹窗保持原样...
     if (showHistoryList) {
         val history = BrowserHistoryStore.getHistory(ctx)
         Dialog(onDismissRequest = { showHistoryList = false }) {
@@ -258,45 +218,24 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                     Text("历史记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
                     TextButton(onClick = { BrowserHistoryStore.clearHistory(ctx); showHistoryList = false }) { Text("清空") }
                 }
-                if (history.isEmpty()) {
-                    Text("暂无历史记录", modifier = Modifier.padding(16.dp), color = palette.onSurfaceDim)
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(history) { url ->
-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { webView?.loadUrl(url); showHistoryList = false }.padding(12.dp)) {
-                                Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
+                if (history.isEmpty()) Text("暂无历史记录", modifier = Modifier.padding(16.dp), color = palette.onSurfaceDim)
+                else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(history) { url -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { webView?.loadUrl(url); showHistoryList = false }.padding(12.dp)) { Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall) } } }
             }
         }
     }
 
-    // 书签弹窗
     if (showBookmarkList) {
         val bookmarks = BookmarkStore.get(ctx)
         Dialog(onDismissRequest = { showBookmarkList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)) {
                 Text("我的书签", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
                 Spacer(Modifier.height(8.dp))
-                if (bookmarks.isEmpty()) {
-                    Text("暂无书签", modifier = Modifier.padding(16.dp), color = palette.onSurfaceDim)
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(bookmarks) { url ->
-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { webView?.loadUrl(url); showBookmarkList = false }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(url, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
-                                IconButton(onClick = { BookmarkStore.remove(ctx, url); showBookmarkList = false }) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
-                            }
-                        }
-                    }
-                }
+                if (bookmarks.isEmpty()) Text("暂无书签", modifier = Modifier.padding(16.dp), color = palette.onSurfaceDim)
+                else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(bookmarks) { url -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { webView?.loadUrl(url); showBookmarkList = false }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(url, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall); IconButton(onClick = { BookmarkStore.remove(ctx, url); showBookmarkList = false }) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) } } } }
             }
         }
     }
 
-    // 下载弹窗
     if (showDownloadDialog) {
         AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads ->
             DownloadManager.add(ctx, url, name, threads, DirStore.resolveDownloadDir(ctx))

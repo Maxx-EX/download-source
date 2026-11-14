@@ -17,8 +17,8 @@ android {
         applicationId = "com.downloadsource"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "2.4.0"
+        versionCode = 6
+        versionName = "2.4.5"
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -74,5 +74,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
