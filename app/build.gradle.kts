@@ -1,10 +1,13 @@
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.Date
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
-val buildTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
-    .format(java.util.Date())
+val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
     namespace = "com.downloadsource"
@@ -14,8 +17,8 @@ android {
         applicationId = "com.downloadsource"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.2.0"
+        versionCode = 5
+        versionName = "2.3.0"
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -63,7 +66,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

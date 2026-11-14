@@ -2,12 +2,12 @@ package com.downloadsource
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -41,16 +41,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 捕获系统分享传入的链接
+        val sharedText = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
+
         setContent {
             var isDark by remember { mutableStateOf(rememberDark()) }
             LifecycleResumeEffect(Unit) { isDark = rememberDark(); onPauseOrDispose {} }
+            
+            // Android 12+ 动态取色
+            val colorScheme = if (isDark) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(this) else darkColorScheme()
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(this) else lightColorScheme()
+            }
+
             val palette = if (isDark) DarkPalette else LightPalette
             GradientBackground(palette) {
-                MaterialTheme(
-                    colorScheme = if (isDark) darkColorScheme() else lightColorScheme(),
-                    typography = Typography(defaultFontFamily = FontFamily.SansSerif)
-                ) {
+                MaterialTheme(colorScheme = colorScheme, typography = Typography(defaultFontFamily = FontFamily.SansSerif)) {
                     MainScaffold(
+                        initialShareUrl = sharedText,
                         onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
                         onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
                     )
@@ -63,8 +73,9 @@ class MainActivity : ComponentActivity() {
 enum class Tab { DOWNLOAD, BROWSER }
 
 @Composable
-fun MainScaffold(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
-    var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
+fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
+    var currentTab by remember { mutableStateOf(if (initialShareUrl != null) Tab.DOWNLOAD else Tab.DOWNLOAD) }
+    
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
@@ -86,7 +97,7 @@ fun MainScaffold(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Un
         ) { tab ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (tab) {
-                    Tab.DOWNLOAD -> DownloadScreen(onPickFolder, onOpenSettings)
+                    Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
                     Tab.BROWSER -> BrowserScreen()
                 }
             }
@@ -95,11 +106,12 @@ fun MainScaffold(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Un
 }
 
 @Composable
-fun DownloadScreen(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
+fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(initialShareUrl != null) }
+    var prefillUrl by remember { mutableStateOf(initialShareUrl ?: "") }
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     
     LifecycleResumeEffect(Unit) { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath; onPauseOrDispose {} }
@@ -125,14 +137,30 @@ fun DownloadScreen(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> 
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(tasks, key = { it.id }) { task ->
-                        DownloadCard(task, { DownloadManager.pause(ctx, task.id) }, { DownloadManager.start(ctx, task.id) }, { DownloadManager.remove(ctx, task.id) })
+                        DownloadCard(
+                            task = task, 
+                            onPause = { DownloadManager.pause(ctx, task.id) }, 
+                            onResume = { DownloadManager.start(ctx, task.id) }, 
+                            onDelete = { DownloadManager.remove(ctx, task.id) },
+                            onOpen = {
+                                val file = File(task.outputPath ?: "")
+                                if (file.exists()) {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, ctx.contentResolver.getType(uri) ?: "*/*")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    try { ctx.startActivity(intent) } catch (e: Exception) { android.widget.Toast.makeText(ctx, "无法打开文件", android.widget.Toast.LENGTH_SHORT).show() }
+                                }
+                            }
+                        )
                     }
                 }
             }
         }
 
         FloatingActionButton(
-            onClick = { showAddDialog = true },
+            onClick = { showAddDialog = true; prefillUrl = "" },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
             containerColor = palette.primary.first(),
             shape = androidx.compose.foundation.shape.CircleShape
@@ -142,7 +170,7 @@ fun DownloadScreen(onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> 
     }
 
     if (showAddDialog) {
-        AddTaskDialog(onDismiss = { showAddDialog = false }) { url, name, threads ->
+        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads ->
             DownloadManager.add(ctx, url, name, threads, File(DirStore.resolveDownloadDir(ctx).absolutePath))
             showAddDialog = false
         }

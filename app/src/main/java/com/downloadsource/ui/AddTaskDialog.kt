@@ -24,11 +24,12 @@ import androidx.compose.ui.window.Dialog
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddTaskDialog(
+    initialUrl: String = "",
     onDismiss: () -> Unit,
     onConfirm: (url: String, name: String?, threads: Int) -> Unit,
 ) {
     val ctx = LocalContext.current
-    var url by remember { mutableStateOf(getClipboardUrl(ctx) ?: "") }
+    var url by remember { mutableStateOf(if (initialUrl.isNotBlank()) initialUrl else getClipboardUrl(ctx) ?: "") }
     var name by remember { mutableStateOf("") }
     var threads by remember { mutableFloatStateOf(8f) }
     val palette = LocalPalette.current
@@ -38,12 +39,10 @@ fun AddTaskDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
-                .background(palette.surface) // 半透明
+                .background(palette.surface)
                 .border(
                     width = 1.dp,
-                    brush = Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))
-                    ),
+                    brush = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))),
                     shape = RoundedCornerShape(28.dp)
                 )
                 .padding(24.dp),
@@ -76,23 +75,14 @@ fun AddTaskDialog(
                     Text("下载线程数", color = palette.onSurface)
                     Text("${threads.toInt()}", color = palette.primary.first(), fontWeight = FontWeight.Bold)
                 }
-                Slider(
-                    value = threads,
-                    onValueChange = { threads = it },
-                    valueRange = 1f..16f,
-                    steps = 15
-                )
+                Slider(value = threads, onValueChange = { threads = it }, valueRange = 1f..16f, steps = 15)
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
                     Text("取消", color = palette.onSurfaceDim)
                 }
-                Button(
-                    onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) },
-                    modifier = Modifier.weight(1f),
-                    enabled = url.isNotBlank()
-                ) {
+                Button(onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) }, modifier = Modifier.weight(1f), enabled = url.isNotBlank()) {
                     Text("开始下载")
                 }
             }
