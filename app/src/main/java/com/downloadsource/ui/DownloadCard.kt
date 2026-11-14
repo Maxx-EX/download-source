@@ -98,7 +98,7 @@ fun DownloadCard(
                     SheetItem("其它应用打开", Icons.Default.OpenInNew, palette.onSurface) {
                         val file = File(task.outputPath ?: "")
                         if (file.exists()) {
-                            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                            val uri = try { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file) } catch (e: Exception) { Toast.makeText(ctx, "文件路径异常，无法打开", Toast.LENGTH_SHORT).show(); return@SheetItem }
                             val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
                             try { ctx.startActivity(Intent.createChooser(intent, "打开文件")) } catch (_: Exception) { }
                         } else Toast.makeText(ctx, "文件不存在", Toast.LENGTH_SHORT).show()

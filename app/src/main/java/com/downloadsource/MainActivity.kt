@@ -1,9 +1,11 @@
 package com.downloadsource
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,6 +19,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,9 +29,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -122,7 +132,6 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             }
         }
         
-        // 可拖动悬浮窗
         DraggableFloatingButton(onClick = { currentTab = Tab.DOWNLOAD })
     }
 }
@@ -136,21 +145,15 @@ fun DraggableFloatingButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .size(56.dp)
-            .draggable(
-                orientation = Orientation.Vertical,
-                state = rememberDraggableState { delta -> offsetY += delta }
-            )
-            .draggable(
-                orientation = Orientation.Horizontal,
-                state = rememberDraggableState { delta -> offsetX += delta }
-            )
+            .size(48.dp) // 缩小一点更精致
+            .draggable(orientation = Orientation.Vertical, state = rememberDraggableState { delta -> offsetY += delta })
+            .draggable(orientation = Orientation.Horizontal, state = rememberDraggableState { delta -> offsetX += delta })
             .clip(CircleShape)
-            .background(palette.primary.first())
+            .background(palette.primary.first().copy(alpha = 0.8f))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Icon(Icons.Default.KeyboardArrowUp, "Top", tint = Color.White)
+        Icon(Icons.Default.Home, "Top", tint = Color.White)
     }
 }
 
@@ -159,6 +162,8 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     
     var showAddDialog by remember { mutableStateOf(initialShareUrl != null) }
     var prefillUrl by remember { mutableStateOf(initialShareUrl ?: "") }
@@ -169,6 +174,27 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     val selectedTasks = remember { mutableStateListOf<String>() }
 
     LifecycleResumeEffect(Unit) { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath; onPauseOrDispose {} }
+
+    val doSearch = {
+        val q = searchQuery.trim()
+        if (q.isNotEmpty()) {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+            if (q.startsWith("http") || q.contains(".com") || q.contains(".cn") || q.contains("pan.") || q.contains("lanzou")) {
+                DownloadManager.add(ctx, q, null, 8, 0, emptyMap(), File(dirPath))
+                searchQuery = ""
+            } else {
+                val engine = BrowserPrefs.getEngine(ctx)
+                val encoded = URLEncoder.encode(q, "UTF-8")
+                val url = when(engine) {
+                    "Baidu" -> "https://www.baidu.com/s?wd=$encoded"
+                    "Google" -> "https://www.google.com/search?q=$encoded"
+                    else -> "https://www.bing.com/search?q=$encoded"
+                }
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
@@ -197,7 +223,7 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
                     IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(16.dp))
             
             // 主页搜索框
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -206,39 +232,22 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     textStyle = TextStyle(color = palette.onSurface),
+                    cursorBrush = SolidColor(palette.primary.first()),
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { doSearch() }),
                     decorationBox = { inner ->
                         if (searchQuery.isEmpty()) Text("输入链接或搜索关键词...", color = palette.onSurfaceDim)
                         inner()
                     },
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Go),
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = {
-                        val q = searchQuery.trim()
-                        if (q.isNotEmpty()) {
-                            if (q.startsWith("http") || q.contains(".com") || q.contains(".cn")) {
-                                DownloadManager.add(ctx, q, null, 8, 0, emptyMap(), File(dirPath))
-                                searchQuery = ""
-                            } else {
-                                // 不是链接，直接拉起系统浏览器搜索
-                                val engine = BrowserPrefs.getEngine(ctx)
-                                val encoded = URLEncoder.encode(q, "UTF-8")
-                                val url = when(engine) {
-                                    "Baidu" -> "https://www.baidu.com/s?wd=$encoded"
-                                    "Google" -> "https://www.google.com/search?q=$encoded"
-                                    else -> "https://www.bing.com/search?q=$encoded"
-                                }
-                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                            }
-                        }
-                    })
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                 )
                 if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = palette.onSurfaceDim) }
+                    IconButton(onClick = { doSearch() }) { Icon(Icons.Default.ArrowForward, null, tint = palette.primary.first()) }
                 }
             }
             
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("存至: ", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 Text(dirPath, color = palette.onSurface, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
