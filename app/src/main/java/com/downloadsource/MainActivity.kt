@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,7 +90,8 @@ class MainActivity : ComponentActivity() {
                     MainScaffold(
                         initialShareUrl = sharedText,
                         onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
-                        onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+                        onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                        onOpenNetDisk = { startActivity(Intent(this@MainActivity, NetDiskActivity::class.java)) } // 内测入口
                     )
                 }
             }
@@ -98,14 +101,15 @@ class MainActivity : ComponentActivity() {
 
 enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
+fun MainScaffold(
+    initialShareUrl: String?, 
+    onPickFolder: ((Uri) -> Unit) -> Unit, 
+    onOpenSettings: () -> Unit,
+    onOpenNetDisk: () -> Unit
+) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
-    var showFabMenu by remember { mutableStateOf(false) }
-    
-    // 状态提升：用于通知 Browser 打开特定面板
     var triggerSniff by remember { mutableStateOf(false) }
     var triggerHistory by remember { mutableStateOf(false) }
 
@@ -122,15 +126,15 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             containerColor = Color.Transparent,
             bottomBar = {
                 NavigationBar(containerColor = LocalPalette.current.surface) {
-                    NavigationBarItem(selected = currentTab == Tab.DOWNLOAD, onClick = { currentTab = Tab.DOWNLOAD }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("下载") })
-                    NavigationBarItem(selected = currentTab == Tab.BROWSER, onClick = { currentTab = Tab.BROWSER }, icon = { Icon(Icons.Default.Search, null) }, label = { Text("搜索") })
-                    NavigationBarItem(selected = currentTab == Tab.LIBRARY, onClick = { currentTab = Tab.LIBRARY }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("文件库") })
+                    NavigationBarItem(selected = currentTab == Tab.DOWNLOAD, onClick = { currentTab = Tab.DOWNLOAD }, icon = { Icon(Icons.Default.Home, null, modifier = Modifier.scale(if (currentTab == Tab.DOWNLOAD) 1.2f else 1f)) }, label = { Text("下载") })
+                    NavigationBarItem(selected = currentTab == Tab.BROWSER, onClick = { currentTab = Tab.BROWSER }, icon = { Icon(Icons.Default.Search, null, modifier = Modifier.scale(if (currentTab == Tab.BROWSER) 1.2f else 1f)) }, label = { Text("搜索") })
+                    NavigationBarItem(selected = currentTab == Tab.LIBRARY, onClick = { currentTab = Tab.LIBRARY }, icon = { Icon(Icons.Default.Folder, null, modifier = Modifier.scale(if (currentTab == Tab.LIBRARY) 1.2f else 1f)) }, label = { Text("文件库") })
                 }
             }
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (currentTab) {
-                    Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
+                    Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings, onOpenNetDisk)
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
                         onPlayStream = { playingUri = Uri.parse(it) },
@@ -144,56 +148,68 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             }
         }
         
-        // 修复版悬浮球：全屏可拖动
-        var offsetX by remember { mutableFloatStateOf(0f) }
-        var offsetY by remember { mutableFloatStateOf(0f) }
+        // 修复版悬浮球：修正吸附中心点，防止飞出屏幕
+        var offsetX by remember { mutableFloatStateOf((screenWidth.value / 2) - 100f) }
+        var offsetY by remember { mutableFloatStateOf(screenHeight.value - 400f) }
+        var showMenu by remember { mutableStateOf(false) }
+        var isHoveringBottomBar by remember { mutableStateOf(false) }
+        val bottomBarThreshold = screenHeight.value - 200f
 
         Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                 .size(56.dp)
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidth.value * 2.5f) // 简单限制边界
-                        offsetY = (offsetY + dragAmount.y).coerceIn(-screenHeight.value * 2f, screenHeight.value * 2f)
-                    }
+                    detectDragGestures(
+                        onDragStart = { showMenu = false },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidth.value * 2.5f - 56f)
+                            offsetY = (offsetY + dragAmount.y).coerceIn(0f, screenHeight.value - 200f)
+                            isHoveringBottomBar = offsetY > bottomBarThreshold
+                        },
+                        onDragEnd = {
+                            if (isHoveringBottomBar) {
+                                // 吸附居中对齐
+                                val third = screenWidth.value * 2.5f / 3f
+                                if (offsetX < third) { currentTab = Tab.DOWNLOAD; offsetX = third / 2 - 28f }
+                                else if (offsetX < third * 2) { currentTab = Tab.BROWSER; offsetX = third * 1.5f - 28f }
+                                else { currentTab = Tab.LIBRARY; offsetX = third * 2.5f - 28f }
+                            }
+                            isHoveringBottomBar = false
+                        }
+                    )
                 }
                 .clip(CircleShape)
-                .background(LocalPalette.current.primary.first().copy(alpha = 0.9f))
+                .background(if (isHoveringBottomBar) LocalPalette.current.primary.first() else LocalPalette.current.primary.first().copy(alpha = 0.85f))
                 .combinedClickable(
-                    onClick = { currentTab = Tab.DOWNLOAD },
-                    onLongClick = { showFabMenu = true }
+                    onClick = { showMenu = !showMenu },
+                    onLongClick = { showMenu = true }
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Home, "Top", tint = Color.White)
+            Icon(Icons.Default.Menu, "Menu", tint = Color.White)
         }
-    }
 
-    if (showFabMenu) {
-        ModalBottomSheet(onDismissRequest = { showFabMenu = false }, containerColor = LocalPalette.current.surface) {
-            Column(Modifier.padding(16.dp)) {
-                Text("快捷控制台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.onSurface)
-                Spacer(Modifier.height(16.dp))
-                BrowserMenuItem("资源嗅探列表", Icons.Default.Radar, LocalPalette.current.onSurface) { 
-                    currentTab = Tab.BROWSER
-                    triggerSniff = true // 发送指令
-                    showFabMenu = false
-                }
-                BrowserMenuItem("历史浏览记录", Icons.Default.History, LocalPalette.current.onSurface) { 
-                    currentTab = Tab.BROWSER
-                    triggerHistory = true
-                    showFabMenu = false
-                }
-                Spacer(Modifier.height(16.dp))
+        // 长按悬浮球展开的垂直标签（使用 Popup 防止位置错乱）
+        if (showMenu) {
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                offset = androidx.compose.ui.unit.DpOffset(offsetX.dp, offsetY.dp)
+            ) {
+                DropdownMenuItem(text = { Text("下载列表") }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
+                DropdownMenuItem(text = { Text("浏览器") }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
+                DropdownMenuItem(text = { Text("文件库") }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("网盘解析(内测)") }, onClick = { onOpenNetDisk(); showMenu = false })
             }
         }
     }
 }
 
 @Composable
-fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
+fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit, onOpenNetDisk: () -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
@@ -204,7 +220,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     var searchQuery by remember { mutableStateOf("") }
     
-    // 过滤功能
     var filterMode by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "下载中", "已完成", "失败")
 
@@ -234,8 +249,21 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                        if (BuildConfig.CHANNEL == "zeta") {
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.background(Color.Red, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                Text("内测", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                }
+                
+                // 内测版专属快捷入口
+                if (BuildConfig.CHANNEL == "zeta") {
+                    IconButton(onClick = onOpenNetDisk) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
                 }
                 IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
             }
@@ -257,7 +285,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
             
             Spacer(Modifier.height(16.dp))
             
-            // 状态过滤栏
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 filters.forEach { f ->
                     val selected = filterMode == f
