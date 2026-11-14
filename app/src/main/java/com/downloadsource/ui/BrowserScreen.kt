@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.webkit.*
-import java.io.ByteArrayInputStream
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
@@ -42,8 +41,8 @@ import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
+import java.io.ByteArrayInputStream // 确保只有这一个正确的导入
 import java.io.File
-import java.io.ByteArrayInputStream
 import java.net.URLEncoder
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -71,12 +70,15 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
     
     var isDarkMode by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) { onDispose { webView?.destroy() } }
+    DisposableEffect(Unit) {
+        onDispose { webView?.destroy() }
+    }
+
     BackHandler(enabled = canGoBack) { webView?.goBack() }
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // 极简地址栏 (Via 风格)
+            // 顶部极简地址栏 (Via 风格)
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = urlInput, onValueChange = { urlInput = it }, placeholder = { Text("搜索或输入网址") }, leadingIcon = { Icon(Icons.Default.Search, null) },
@@ -87,7 +89,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                         var q = urlInput.trim()
                         if (q.isNotEmpty()) {
                             val target = if (q.startsWith("http")) q else {
-                                // 核心修复：强制读取引擎并拼接链接
+                                // 彻底修复搜索引擎切换：切换后一定跳转到对应的引擎 URL
                                 val engine = BrowserPrefs.getEngine(ctx)
                                 val encoded = URLEncoder.encode(q, "UTF-8")
                                 when (engine) {
@@ -103,7 +105,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                 )
             }
 
-            // 简洁工具栏
+            // 操作栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row {
                     IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (canGoBack) palette.onSurface else palette.onSurfaceDim) }
@@ -133,11 +135,10 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                             onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
-                            // 拦截 WAF 验证页 (acw_sc__v2 等)
+                            // WAF 验证拦截 (解决浏览器一直跳验证)
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                 val url = request.url.toString()
                                 if (url.contains("acw_sc__v2") || url.contains("captcha")) {
-                                    // 利用 JS 注入直接跳过 WAF 验证页，或返回空数据避免卡死
                                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                                 }
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
@@ -197,7 +198,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 嗅探列表等保持原样...
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)) {
@@ -222,7 +222,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
-    // 历史记录 / 书签弹窗保持原样...
     if (showHistoryList) {
         val history = BrowserHistoryStore.getHistory(ctx)
         Dialog(onDismissRequest = { showHistoryList = false }) {
