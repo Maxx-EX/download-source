@@ -1,7 +1,7 @@
 package com.downloadsource.core
 
 import android.content.Context
-import com.downloadsource.BuildConfig // 修复：补全导入
+import com.downloadsource.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,15 +40,14 @@ object DownloadManager {
         scope.launch {
             try {
                 val shareInfo = NetDiskParser.detect(url)
-                val parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
-                    // 核心：隔离网盘解析功能
-                    if (BuildConfig.CHANNEL == "zeta") {
-                        DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
-                    } else {
-                        throw Exception("网盘解析为内测功能，请下载带 [Zeta] 标签的内测版体验")
-                    }
+                var parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
+                    if (BuildConfig.CHANNEL == "zeta") DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
+                    else throw Exception("网盘解析为内测功能，请下载 Zeta 版体验")
                 } else url
                 
+                // 功能 2：自动解析 GitHub 镜像加速
+                parsedUrl = MirrorResolver.resolveFastest(context, parsedUrl)
+
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName
                 update(context, task.id) { it.copy(url = parsedUrl, fileName = realName) }
                 startTask(context, task.id)

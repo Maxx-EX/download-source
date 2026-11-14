@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
             }
 
             GradientBackground(palette) {
-                MaterialTheme(colorScheme = colorScheme) {
+                MaterialTheme(colorScheme = colorScheme, typography = SafeTypography) {
                     MainScaffold(
                         initialShareUrl = sharedText,
                         onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },

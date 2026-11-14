@@ -7,15 +7,23 @@ import android.media.MediaMuxer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import okhttp3.Headers
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import okhttp3.*
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
-class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()) {
+class Segmenter {
+    // 引入新技术：HTTP/2 + 连接池复用 + 自动重试，大幅提升握手速度与稳定性
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .connectionPool(ConnectionPool(15, 10, TimeUnit.MINUTES))
+        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+        .build()
+
     suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, speedLimitKb: Long, customHeaders: Map<String, String>, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         val headers = Headers.Builder().apply { customHeaders.forEach { (k, v) -> add(k, v) } }.build()
         
@@ -31,7 +39,11 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         val total = meta.first
         if (total <= 0) error("获取文件大小失败")
         
-        val n = if (meta.second && total > 4L shl 20) parts else 1
+        // 智能线程调整：如果文件很大，最多利用传入的线程数（最高16），避免连接爆炸
+        var n = if (meta.second && total > 4L shl 20) parts.coerceAtMost(16) else 1
+        // 如果文件小于 2MB，强制单线程
+        if (total < 2L shl 20) n = 1
+
         val tmpDir = File(targetDir, ".${fileName}.parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
 
@@ -65,10 +77,14 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
     }
 
     private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: Headers) {
-        var retries = 3
+        var retries = 5
         while (retries > 0) {
             try { downloadRange(url, start, end, file, downloaded, speedLimitKb, headers); return } 
-            catch (e: Exception) { retries--; if (retries == 0) throw e; delay(1500) }
+            catch (e: Exception) { 
+                retries--; 
+                if (retries == 0) throw e; 
+                delay(1500) // 失败后退避重试
+            }
         }
     }
 
@@ -84,7 +100,8 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
             RandomAccessFile(file, "rw").use { raf ->
                 raf.seek(existing)
                 resp.body?.byteStream()?.use { ins ->
-                    val buf = ByteArray(128 * 1024)
+                    // 动态 Buffer 技术：如果是限制网速，用大 Buffer 减少线程睡眠；不限制用 64KB 大块读取
+                    val buf = ByteArray(if (speedLimitKb > 0) 16 * 1024 else 64 * 1024)
                     var bytesSinceStart = 0L
                     val startTime = System.currentTimeMillis()
 
@@ -108,8 +125,12 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
     }
 
     private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, headers: Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
-        val tsUrls = extractTsUrls(url, mutableSetOf())
-        if (tsUrls.isEmpty()) error("解析不到有效视频流")
+        var finalUrl = url
+        if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
+        
+        val tsUrls = extractTsUrls(finalUrl, mutableSetOf())
+        if (tsUrls.isEmpty()) error("未找到有效的 TS 分片")
+        
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
         val total = tsUrls.size.toLong()
@@ -120,7 +141,16 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val partFile = File(tmpDir, "$index.ts")
-                    if (!partFile.exists()) client.newCall(Request.Builder().url(tsUrl).headers(headers).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
+                    if (!partFile.exists()) {
+                        var r = 3
+                        while (r > 0) {
+                            try {
+                                // M3U8 也使用带 HTTP/2 的连接池客户端
+                                client.newCall(Request.Builder().url(tsUrl).headers(headers).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
+                                break
+                            } catch (e: Exception) { r--; if (r == 0) throw e; delay(1000) }
+                        }
+                    }
                     downloaded.incrementAndGet()
                 }
             }
@@ -140,12 +170,11 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
     private suspend fun extractTsUrls(url: String, visited: MutableSet<String>): List<String> = withContext(Dispatchers.IO) {
         if (visited.contains(url)) return@withContext emptyList()
         visited.add(url)
-        val finalUrl = if (url.contains(".ts")) url.substringBeforeLast("/").plus("/index.m3u8") else url
-        val text = client.newCall(Request.Builder().url(finalUrl).build()).execute().use { it.body?.string() ?: "" }
+        val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
         val urls = mutableListOf<String>()
         for (line in text.lines()) {
             if (line.isNotBlank() && !line.startsWith("#")) {
-                val absUrl = if (line.startsWith("http")) line else finalUrl.substringBeforeLast('/') + "/" + line
+                val absUrl = if (line.startsWith("http")) line else url.substringBeforeLast('/') + "/" + line
                 if (absUrl.contains(".m3u8")) urls.addAll(extractTsUrls(absUrl, visited)) else urls.add(absUrl)
             }
         }

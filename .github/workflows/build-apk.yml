@@ -30,16 +30,16 @@ jobs:
       - name: Rename & collect
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/zeta/debug/app-zeta-debug.apk   out/DownloadSource-Zeta-v2.8.1.apk
-          cp app/build/outputs/apk/omega/debug/app-omega-debug.apk out/DownloadSource-Omega-v2.8.1.apk
+          cp app/build/outputs/apk/zeta/debug/app-zeta-debug.apk   out/DownloadSource-Zeta-v3.0.0.apk
+          cp app/build/outputs/apk/omega/debug/app-omega-debug.apk out/DownloadSource-Omega-v3.0.0.apk
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
-        with: { name: zeta-debug-apk, path: out/DownloadSource-Zeta-v2.8.1.apk }
+        with: { name: zeta-debug-apk, path: out/DownloadSource-Zeta-v3.0.0.apk }
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.8.1-build${{ github.run_number }}
-          name: Download source v2.8.1
+          tag_name: v3.0.0-build${{ github.run_number }}
+          name: Download source v3.0.0
           body: |
             🚀 更新说明
             
@@ -51,8 +51,8 @@ jobs:
             - 🧪 内测版开放四大网盘解析测试。
             - 🛡 支持自定义 Header (防 403)。
           files: |
-            out/DownloadSource-Zeta-v2.8.1.apk
-            out/DownloadSource-Omega-v2.8.1.apk
+            out/DownloadSource-Zeta-v3.0.0.apk
+            out/DownloadSource-Omega-v3.0.0.apk
           draft: false
           prerelease: false
         env:

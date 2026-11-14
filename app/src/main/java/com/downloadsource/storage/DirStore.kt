@@ -21,18 +21,23 @@ object DirStore {
     fun get(context: Context): Uri? = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY_URI, null)?.let { Uri.parse(it) }
 
     fun resolveDownloadDir(context: Context): File {
-        val uri = get(context) ?: return defaultDir()
-        val path = treeUriToPath(uri) ?: return defaultDir()
-        val f = File(path)
-        if (!f.exists()) f.mkdirs()
-        return if (f.canWrite()) f else defaultDir()
+        val uri = get(context)
+        val path = if (uri != null) treeUriToPath(uri) else null
+        
+        // 有自定义路径且可写则使用，否则用默认专属文件夹
+        if (path != null) {
+            val f = File(path)
+            if (!f.exists()) f.mkdirs()
+            if (f.canWrite()) return f
+        }
+        return defaultDir()
     }
 
-    // 默认使用公共 Download 目录，如果不行退回应用专属目录
+    // 默认路径：直接放在内部存储根目录的 DownloadSource 文件夹
     fun defaultDir(): File {
-        val publicDownload = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (publicDownload.exists() && publicDownload.canWrite()) return publicDownload
-        return File(Environment.getExternalStorageDirectory(), "DownloadSource")
+        val f = File(Environment.getExternalStorageDirectory(), "DownloadSource")
+        if (!f.exists()) f.mkdirs()
+        return f
     }
 
     private fun treeUriToPath(uri: Uri): String? = try {
@@ -49,8 +54,5 @@ object DirStore {
                 "/storage/$type/$path"
             }
         } else null
-    } catch (e: Exception) {
-        // 回环降级：针对某些无法解析的 ROM，强行取一个系统路径
-        null
-    }
+    } catch (e: Exception) { null }
 }

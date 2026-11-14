@@ -55,6 +55,7 @@ fun SettingsScreen(onClose: () -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     var themeStyle by remember { mutableIntStateOf(ThemeStore.getThemeStyle(ctx)) }
+    var glassType by remember { mutableIntStateOf(ThemeStore.getGlassType(ctx)) }
     var engine by remember { mutableStateOf(BrowserPrefs.getEngine(ctx)) }
     var showDonate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -63,7 +64,7 @@ fun SettingsScreen(onClose: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Back", tint = palette.onSurface, modifier = Modifier.rotate(180f)) }
-            Text("设置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = palette.onSurface)
+            Text("设置 (v3.0)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = palette.onSurface)
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -85,12 +86,24 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
+            // 10 大新功能之一：多主题材质 (液态/毛玻璃/纯色)
             SettingsGroup {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("UI 材质", color = palette.onSurface, modifier = Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("纯色", "毛玻璃", "液态玻璃").forEachIndexed { index, name ->
+                        Box(Modifier.clip(RoundedCornerShape(50)).background(if (glassType == index) palette.primary.first() else palette.onSurface.copy(alpha = 0.1f)).clickable { glassType = index; ThemeStore.setGlassType(ctx, index) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text(name, color = if (glassType == index) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("主题风格", color = palette.onSurface, modifier = Modifier.weight(1f))
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("默认", "极光", "日落", "深海", "赛博").forEachIndexed { index, name ->
+                    listOf("默认", "粉白", "极光", "日落", "深海", "赛博").forEachIndexed { index, name ->
                         Box(Modifier.clip(RoundedCornerShape(50)).background(if (themeStyle == index) palette.primary.first() else palette.onSurface.copy(alpha = 0.1f)).clickable { themeStyle = index; ThemeStore.setThemeStyle(ctx, index) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
                             Text(name, color = if (themeStyle == index) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
                         }
@@ -111,7 +124,8 @@ fun SettingsScreen(onClose: () -> Unit) {
             }
 
             SettingsGroup {
-                SettingsRow("镜像源管理", "GitHub 加速", Icons.Default.Link) { ctx.startActivity(Intent(ctx, SourceManageActivity::class.java)) }
+                // 10 大新功能之二：手动勾选镜像源 (不再让用户打字)
+                SettingsRow("手动选择镜像源", "GitHub 加速", Icons.Default.Link) { ctx.startActivity(Intent(ctx, SourceManageActivity::class.java)) }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 SettingsRow("清理下载缓存", "清理临时分片", Icons.Default.DeleteSweep) {
                     val dir = DirStore.resolveDownloadDir(ctx)
@@ -127,12 +141,7 @@ fun SettingsScreen(onClose: () -> Unit) {
             }
             
             SettingsGroup {
-                // 新增 GitHub 直达入口
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Maxx-EX/download-source")))
-                    }.padding(16.dp), verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(Modifier.fillMaxWidth().clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Maxx-EX/download-source"))) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Image(painter = painterResource(id = R.drawable.ic_github), contentDescription = "GitHub", modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
@@ -145,8 +154,6 @@ fun SettingsScreen(onClose: () -> Unit) {
                 SettingsRow("赞赏码", "请我喝杯咖啡", Icons.Default.Favorite) { showDonate = true }
             }
             
-            Spacer(Modifier.height(24.dp))
-            Text("Zero-core Engine · Made with ❤️", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(24.dp))
         }
     }

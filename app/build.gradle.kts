@@ -17,8 +17,8 @@ android {
         applicationId = "com.downloadsource"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "2.8.1"
+        versionCode = 12
+        versionName = "3.0.0"
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
