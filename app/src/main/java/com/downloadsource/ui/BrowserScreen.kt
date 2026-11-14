@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,88 +43,53 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
     val engines = listOf("Bing", "Baidu", "Google")
     var showEngineMenu by remember { mutableStateOf(false) }
 
+    // 拦截系统返回键
+    BackHandler(enabled = canGoBack) { webView?.goBack() }
+
     Column(modifier.fillMaxSize()) {
-        // 地址栏
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = urlInput,
                 onValueChange = { urlInput = it },
                 placeholder = { Text("搜索或输入网址") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (urlInput.isNotEmpty()) {
-                        IconButton(onClick = { urlInput = "" }) { Icon(Icons.Default.Close, null) }
-                    }
-                },
+                trailingIcon = { if (urlInput.isNotEmpty()) IconButton(onClick = { urlInput = "" }) { Icon(Icons.Default.Close, null) } },
                 singleLine = true,
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = {
                     val q = urlInput.trim()
                     if (q.isNotEmpty()) {
-                        val target = if (q.startsWith("http")) q else {
-                            when (engine) {
-                                "Baidu" -> "https://www.baidu.com/s?wd=$q"
-                                "Google" -> "https://www.google.com/search?q=$q"
-                                else -> "https://www.bing.com/search?q=$q"
-                            }
+                        val target = if (q.startsWith("http")) q else when (engine) {
+                            "Baidu" -> "https://www.baidu.com/s?wd=$q"
+                            "Google" -> "https://www.google.com/search?q=$q"
+                            else -> "https://www.bing.com/search?q=$q"
                         }
-                        currentUrl = target
                         webView?.loadUrl(target)
                         urlInput = target
                     }
                 })
             )
-            // 搜索引擎切换
             Box {
-                TextButton(onClick = { showEngineMenu = true }) {
-                    Text(engine, color = palette.onSurface)
-                }
+                TextButton(onClick = { showEngineMenu = true }) { Text(engine, color = palette.onSurface) }
                 DropdownMenu(expanded = showEngineMenu, onDismissRequest = { showEngineMenu = false }) {
-                    engines.forEach { e ->
-                        DropdownMenuItem(text = { Text(e) }, onClick = {
-                            engine = e
-                            showEngineMenu = false
-                        })
-                    }
+                    engines.forEach { e -> DropdownMenuItem(text = { Text(e) }, onClick = { engine = e; showEngineMenu = false }) }
                 }
             }
         }
 
-        // 浏览器操作栏
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row {
-                IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (canGoBack) palette.onSurface else palette.onSurfaceDim)
-                }
-                IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (canGoForward) palette.onSurface else palette.onSurfaceDim)
-                }
-                IconButton(onClick = { webView?.reload() }) {
-                    Icon(Icons.Default.Refresh, null, tint = palette.onSurface)
-                }
+                IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (canGoBack) palette.onSurface else palette.onSurfaceDim) }
+                IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) { Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (canGoForward) palette.onSurface else palette.onSurfaceDim) }
+                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, null, tint = palette.onSurface) }
             }
-            IconButton(onClick = {
-                currentUrl = "https://www.bing.com"
-                webView?.loadUrl(currentUrl)
-                urlInput = ""
-            }) {
-                Icon(Icons.Default.Home, null, tint = palette.onSurface)
-            }
+            IconButton(onClick = { webView?.loadUrl("https://www.bing.com"); urlInput = "" }) { Icon(Icons.Default.Home, null, tint = palette.onSurface) }
         }
 
         if (progress in 0.01f..0.99f) {
             LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-        } else {
-            Spacer(Modifier.height(4.dp))
-        }
+        } else Spacer(Modifier.height(4.dp))
 
         AndroidView(
             factory = { ctx ->
@@ -133,8 +99,7 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                     webViewClient = object : SafeWebViewClient() {
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
-                            if (url != null) currentUrl = url
-                            urlInput = url ?: ""
+                            if (url != null && !url.startsWith("javascript")) { urlInput = url }
                         }
                         override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                             super.doUpdateVisitedHistory(view, url, isReload)
@@ -143,17 +108,14 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                         }
                     }
                     webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            progress = newProgress / 100f
-                        }
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress / 100f }
                     }
                     loadUrl(currentUrl)
                     webView = this
                 }
             },
             update = { webView = it },
-            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                .background(palette.surface)
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).background(palette.surface)
         )
     }
 }

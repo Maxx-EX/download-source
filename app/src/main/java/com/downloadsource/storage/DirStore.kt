@@ -25,7 +25,6 @@ object DirStore {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getString(KEY_URI, null)?.let { Uri.parse(it) }
 
-    /** 解析下载目录，SAF 失败时退回应用私有外部目录 */
     fun resolveDownloadDir(context: Context): File {
         val uri = get(context) ?: return defaultDir(context)
         val path = treeUriToPath(uri) ?: return defaultDir(context)
@@ -54,7 +53,5 @@ object DirStore {
                 if (rel.isEmpty()) base else "$base/$rel"
             } else null
         } else null
-    } catch (_: Exception) {
-        null
-    }
+    } catch (_: Exception) { null }
 }
