@@ -1,0 +1,5 @@
+<resources>
+    <string name="download_dir">Download directory</string>
+    <string name="pick_folder">Pick folder</string>
+    <string name="search_hint">Search or paste URL</string>
+</resources>
