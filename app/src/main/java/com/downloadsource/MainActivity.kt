@@ -7,7 +7,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,12 +17,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -50,11 +50,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             val isDark = androidx.compose.foundation.isSystemInDarkTheme()
             val palette = if (isDark) DarkPalette else LightPalette
-
             GradientBackground(palette) {
                 MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
                     MainScreen(
-                        onPickFolder = { cb -> pickerResult = cb; picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) },
+                        onPickFolder = { cb ->
+                            pickerResult = cb
+                            picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
+                        },
+                        onOpenSearch = { startActivity(Intent(this, SearchActivity::class.java)) },
+                        onOpenSources = { startActivity(Intent(this, SourceManageActivity::class.java)) },
                     )
                 }
             }
@@ -62,10 +66,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(onPickFolder: ((Uri) -> Unit) -> Unit) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+fun MainScreen(
+    onPickFolder: ((Uri) -> Unit) -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenSources: () -> Unit,
+) {
+    val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
 
@@ -73,27 +80,29 @@ fun MainScreen(onPickFolder: ((Uri) -> Unit) -> Unit) {
     var dirUri by remember { mutableStateOf(DirStore.get(ctx)) }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
-        // 标题
-        Text(
-            "Download source",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.ExtraBold,
-        )
-        Text(
-            BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() } + " 通道",
-            color = palette.onSurfaceDim,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Spacer(Modifier.height(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    BuildConfig.CHANNEL.replaceFirstChar { it.uppercase() } + " 通道",
+                    color = palette.onSurfaceDim,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            IconButton(onClick = onOpenSearch) { Icon(Icons.Default.Search, null, tint = palette.onSurface) }
+            IconButton(onClick = onOpenSources) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
+        }
 
-        // 目录
+        Spacer(Modifier.height(14.dp))
+
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("保存到：", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
             Text(
-                dirUri?.path?.substringAfterLast(':') ?: "未选择",
+                DirStore.resolveDownloadDir(ctx).absolutePath,
                 color = palette.onSurface,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
+                maxLines = 1
             )
             TextButton(onClick = { onPickFolder { dirUri = it } }) {
                 Icon(Icons.Default.Folder, null)
@@ -104,32 +113,25 @@ fun MainScreen(onPickFolder: ((Uri) -> Unit) -> Unit) {
 
         Spacer(Modifier.height(10.dp))
 
-        // 手动添加任务
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = urlInput,
                 onValueChange = { urlInput = it },
-                placeholder = { Text("粘贴下载链接 / 搜索…") },
+                placeholder = { Text("粘贴下载链接…") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = {
-                    submit(urlInput, ctx, dirUri) { urlInput = "" }
-                })
+                keyboardActions = KeyboardActions(onGo = { submit(ctx, urlInput) { urlInput = "" } })
             )
             Spacer(Modifier.width(8.dp))
-            FilledIconButton(
-                onClick = { submit(urlInput, ctx, dirUri) { urlInput = "" } },
-                modifier = Modifier.size(52.dp),
-            ) {
+            FilledIconButton(onClick = { submit(ctx, urlInput) { urlInput = "" } }, modifier = Modifier.size(52.dp)) {
                 Icon(Icons.Default.Add, null)
             }
         }
 
         Spacer(Modifier.height(16.dp))
 
-        // 任务列表
         if (tasks.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("还没有任务，粘贴一个链接开始下载吧", color = palette.onSurfaceDim)
@@ -139,9 +141,9 @@ fun MainScreen(onPickFolder: ((Uri) -> Unit) -> Unit) {
                 items(tasks, key = { it.id }) { task ->
                     DownloadCard(
                         task = task,
-                        onPause = { DownloadManager.pause(task.id) },
-                        onResume = { dirUri?.let { DownloadManager.start(ctx, task.id, File(it.path!!)) } },
-                        onDelete = { DownloadManager.remove(task.id) },
+                        onPause = { DownloadManager.pause(ctx, task.id) },
+                        onResume = { DownloadManager.start(ctx, task.id) },
+                        onDelete = { DownloadManager.remove(ctx, task.id) },
                     )
                 }
             }
@@ -149,13 +151,10 @@ fun MainScreen(onPickFolder: ((Uri) -> Unit) -> Unit) {
     }
 }
 
-private fun submit(raw: String, ctx: android.content.Context, dirUri: Uri?, onDone: () -> Unit) {
+private fun submit(ctx: android.content.Context, raw: String, onDone: () -> Unit) {
     val url = raw.trim()
     if (url.isBlank()) return
-    if (dirUri == null) {
-        android.widget.Toast.makeText(ctx, "请先选择保存目录", android.widget.Toast.LENGTH_SHORT).show()
-        return
-    }
-    DownloadManager.add(ctx, url, File(dirUri.path!!))
+    val dir: File = DirStore.resolveDownloadDir(ctx)
+    DownloadManager.add(ctx, url, dir)
     onDone()
 }

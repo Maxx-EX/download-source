@@ -8,12 +8,14 @@ data class DownloadTask(
     val id: String = UUID.randomUUID().toString(),
     val url: String,
     val fileName: String,
+    val dirPath: String = "",
     val totalBytes: Long = 0L,
     val downloadedBytes: Long = 0L,
     val speed: Long = 0L,
     val status: TaskStatus = TaskStatus.Pending,
     val error: String? = null,
     val outputPath: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
 ) {
     val fraction: Float
         get() = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f

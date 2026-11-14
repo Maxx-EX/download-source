@@ -16,24 +16,33 @@ object DownloadManager {
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
 
-    fun add(context: Context, url: String, dir: File) {
-        val name = guessName(url)
-        val task = DownloadTask(url = url, fileName = name)
-        _tasks.value = _tasks.value + task
-        start(context, task.id, dir)
+    fun init(context: Context) {
+        _tasks.value = TaskStore.load(context)
     }
 
-    fun start(context: Context, id: String, dir: File) {
+    fun add(context: Context, url: String, dir: File) {
+        val name = guessName(url)
+        val task = DownloadTask(url = url, fileName = name, dirPath = dir.absolutePath)
+        _tasks.value = _tasks.value + task
+        TaskStore.save(context, _tasks.value)
+        DownloadService.start(context)
+        start(context, task.id)
+    }
+
+    fun start(context: Context, id: String) {
         val t = _tasks.value.find { it.id == id } ?: return
         if (t.status == TaskStatus.Running) return
-        update(id) { it.copy(status = TaskStatus.Running, error = null) }
+        update(context, id) { it.copy(status = TaskStatus.Running, error = null) }
+        DownloadService.start(context)
 
         jobs[id] = scope.launch {
             try {
+                val dir = File(t.dirPath)
+                if (!dir.exists()) dir.mkdirs()
                 val out = segmenter.download(t.url, dir, t.fileName) { d, total, speed ->
-                    update(id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
+                    update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                 }
-                update(id) {
+                update(context, id) {
                     it.copy(
                         status = TaskStatus.Completed,
                         downloadedBytes = it.totalBytes,
@@ -41,28 +50,33 @@ object DownloadManager {
                         outputPath = out.absolutePath
                     )
                 }
+                if (_tasks.value.none { it.status == TaskStatus.Running }) DownloadService.stop(context)
             } catch (e: CancellationException) {
-                update(id) { it.copy(status = TaskStatus.Paused, speed = 0) }
+                update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
                 throw e
             } catch (e: Exception) {
-                update(id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "unknown", speed = 0) }
+                update(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "unknown", speed = 0) }
+                if (_tasks.value.none { it.status == TaskStatus.Running }) DownloadService.stop(context)
             }
         }
     }
 
-    fun pause(id: String) {
+    fun pause(context: Context, id: String) {
         jobs[id]?.cancel()
         jobs.remove(id)
+        if (_tasks.value.none { it.status == TaskStatus.Running }) DownloadService.stop(context)
     }
 
-    fun remove(id: String) {
+    fun remove(context: Context, id: String) {
         jobs[id]?.cancel()
         jobs.remove(id)
         _tasks.value = _tasks.value.filterNot { it.id == id }
+        TaskStore.save(context, _tasks.value)
     }
 
-    private fun update(id: String, block: (DownloadTask) -> DownloadTask) {
+    private fun update(context: Context, id: String, block: (DownloadTask) -> DownloadTask) {
         _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }
+        TaskStore.save(context, _tasks.value)
     }
 
     private fun guessName(url: String): String {

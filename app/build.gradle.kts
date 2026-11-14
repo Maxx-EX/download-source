@@ -27,14 +27,14 @@ android {
     productFlavors {
         create("zeta") {
             dimension = "channel"
-            applicationIdSuffix = ".zeta"        // com.downloadsource.zeta
+            applicationIdSuffix = ".zeta"
             versionNameSuffix = "-zeta"
             resValue("string", "app_name", "Download source Zeta")
             buildConfigField("String", "CHANNEL", "\"zeta\"")
         }
         create("omega") {
             dimension = "channel"
-            applicationIdSuffix = ".omega"       // com.downloadsource.omega
+            applicationIdSuffix = ".omega"
             versionNameSuffix = "-omega"
             resValue("string", "app_name", "Download source Omega")
             buildConfigField("String", "CHANNEL", "\"omega\"")
@@ -45,14 +45,28 @@ android {
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
     packaging { jniLibs { useLegacyPackaging = false } }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
 }
+
+// 关键修复：自动同步 javac / kotlinc 目标
+kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

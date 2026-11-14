@@ -2,12 +2,15 @@ package com.downloadsource
 
 import android.app.Application
 import android.content.Intent
+import com.downloadsource.core.DownloadManager
 import java.io.PrintWriter
 import java.io.StringWriter
 
 class DsApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        DownloadManager.init(this)
+
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             try {
