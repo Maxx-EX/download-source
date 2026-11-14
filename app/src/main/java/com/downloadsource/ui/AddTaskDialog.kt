@@ -25,12 +25,13 @@ import androidx.compose.ui.window.Dialog
 fun AddTaskDialog(
     initialUrl: String = "",
     onDismiss: () -> Unit,
-    onConfirm: (url: String, name: String?, threads: Int) -> Unit,
+    onConfirm: (url: String, name: String?, threads: Int, speedLimitKb: Long) -> Unit,
 ) {
     val ctx = LocalContext.current
     var url by remember { mutableStateOf(if (initialUrl.isNotBlank()) initialUrl else getClipboardUrl(ctx) ?: "") }
     var name by remember { mutableStateOf("") }
     var threads by remember { mutableFloatStateOf(8f) }
+    var speedLimit by remember { mutableFloatStateOf(0f) }
     val palette = LocalPalette.current
 
     Dialog(onDismissRequest = onDismiss) {
@@ -52,10 +53,18 @@ fun AddTaskDialog(
                 }
                 Slider(value = threads, onValueChange = { threads = it }, valueRange = 1f..16f, steps = 15)
             }
+            
+            Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("限速 (0为不限)", color = palette.onSurface, style = MaterialTheme.typography.bodyMedium)
+                    Text(if (speedLimit == 0f) "∞" else "${speedLimit.toLong()} KB/s", color = palette.primary.first(), fontWeight = FontWeight.Bold)
+                }
+                Slider(value = speedLimit, onValueChange = { speedLimit = it }, valueRange = 0f..2048f, steps = 63)
+            }
 
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", color = palette.onSurfaceDim) }
-                Button(onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt()) }, modifier = Modifier.weight(1f), enabled = url.isNotBlank()) { Text("下载") }
+                Button(onClick = { if (url.isNotBlank()) onConfirm(url, name, threads.toInt(), speedLimit.toLong()) }, modifier = Modifier.weight(1f), enabled = url.isNotBlank()) { Text("下载") }
             }
         }
     }

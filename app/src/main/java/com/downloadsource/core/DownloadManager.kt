@@ -22,28 +22,25 @@ object DownloadManager {
 
     fun init(context: Context) {
         _tasks.value = TaskStore.load(context)
-        // 核心功能：App 重启时，把所有未完成的任务标记为 Pending，等待网络恢复自动继续
-        _tasks.value.forEach { t ->
-            if (t.status == TaskStatus.Running) update(context, t.id) { it.copy(status = TaskStatus.Pending, speed = 0) }
-        }
+        _tasks.value.forEach { if (it.status == TaskStatus.Running) update(context, it.id) { t -> t.copy(status = TaskStatus.Pending, speed = 0) } }
         NetworkMonitor.start(context)
     }
 
     fun autoResumeTasks(context: Context) {
-        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach {
-            startTask(context, it.id)
-        }
+        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
 
-    fun add(context: Context, url: String, customName: String?, threads: Int, dir: File) {
+    fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, dir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
-        val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads)
+        val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb)
         _tasks.value = _tasks.value + task
         TaskStore.save(context, _tasks.value)
         
         scope.launch {
-            val realName = if (customName.isNullOrBlank()) probeRealFileName(url) else customName
-            update(context, task.id) { it.copy(fileName = realName) }
+            // 尝试解析网盘等特殊链接
+            val realUrl = NetDiskParser.tryParse(url) ?: url
+            val realName = if (customName.isNullOrBlank()) probeRealFileName(realUrl) else customName
+            update(context, task.id) { it.copy(url = realUrl, fileName = realName) }
             startTask(context, task.id)
         }
     }
@@ -62,7 +59,7 @@ object DownloadManager {
         jobs[id] = scope.launch {
             try {
                 val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
-                val out = segmenter.download(t.url, dir, t.fileName, t.threads) { d, total, speed ->
+                val out = segmenter.download(t.url, dir, t.fileName, t.threads, t.speedLimitKb) { d, total, speed ->
                     update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
@@ -91,6 +88,10 @@ object DownloadManager {
         update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
         checkPending(context)
     }
+
+    fun pauseAll(context: Context) { _tasks.value.filter { it.status == TaskStatus.Running }.forEach { pause(context, it.id) } }
+    fun resumeAll(context: Context) { autoResumeTasks(context) }
+    fun removeAllCompleted(context: Context) { _tasks.value.filter { it.status == TaskStatus.Completed }.forEach { remove(context, it.id) } }
 
     fun rename(context: Context, id: String, newName: String) {
         val t = _tasks.value.find { it.id == id } ?: return

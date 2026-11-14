@@ -14,14 +14,9 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
-class Segmenter(
-    private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
-) {
-    suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
-        // 如果是 TS 或 M3U8，强制走 M3U8 重组（防止生成无用的乱码文件）
-        if (url.contains(".m3u8") || url.contains(".m3u") || url.endsWith(".ts", true)) {
-            return@coroutineScope downloadM3u8(url, targetDir, fileName, parts, onTick)
-        }
+class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()) {
+    suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, speedLimitKb: Long, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+        if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(url, targetDir, fileName, parts, onTick)
 
         val headReq = Request.Builder().url(url).head().build()
         val meta = withContext(Dispatchers.IO) {
@@ -52,7 +47,7 @@ class Segmenter(
             (0 until n).map { i ->
                 async(Dispatchers.IO) {
                     val start = i * total / n; val end = if (i == n - 1) total - 1 else (i + 1) * total / n - 1
-                    retryDownloadRange(url, start, end, File(tmpDir, "$fileName.part$i"), downloaded)
+                    retryDownloadRange(url, start, end, File(tmpDir, "$fileName.part$i"), downloaded, speedLimitKb)
                 }
             }.awaitAll()
             ticker.cancel()
@@ -63,20 +58,18 @@ class Segmenter(
             tmpDir.deleteRecursively()
             onTick(total, total, 0)
             out
-        } catch (e: Exception) {
-            ticker.cancel(); throw e
-        }
+        } catch (e: Exception) { ticker.cancel(); throw e }
     }
 
-    private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong) {
+    private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long) {
         var retries = 3
         while (retries > 0) {
-            try { downloadRange(url, start, end, file, downloaded); return } 
+            try { downloadRange(url, start, end, file, downloaded, speedLimitKb); return } 
             catch (e: Exception) { retries--; if (retries == 0) throw e; delay(1500) }
         }
     }
 
-    private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong) {
+    private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long) {
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
         if (realStart > end) { downloaded.addAndGet(existing); return }
@@ -89,20 +82,32 @@ class Segmenter(
                 raf.seek(existing)
                 resp.body?.byteStream()?.use { ins ->
                     val buf = ByteArray(128 * 1024)
+                    var bytesSinceStart = 0L
+                    val startTime = System.currentTimeMillis()
+
                     while (true) {
-                        val r = ins.read(buf); if (r <= 0) break
-                        raf.write(buf, 0, r); downloaded.addAndGet(r.toLong())
+                        val r = ins.read(buf)
+                        if (r <= 0) break
+                        raf.write(buf, 0, r)
+                        downloaded.addAndGet(r.toLong())
+                        bytesSinceStart += r
+
+                        // 限速逻辑
+                        if (speedLimitKb > 0) {
+                            val speedLimitBytes = speedLimitKb * 1024
+                            val expectedElapsed = (bytesSinceStart * 1000) / speedLimitBytes
+                            val actualElapsed = System.currentTimeMillis() - startTime
+                            if (expectedElapsed > actualElapsed) Thread.sleep(expectedElapsed - actualElapsed)
+                        }
                     }
                 }
             }
         }
     }
 
-    // 聚合流功能：如果传入的是 TS，则把网页的前缀拼接起来去递归抓取
     private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         val tsUrls = extractTsUrls(url, mutableSetOf())
         if (tsUrls.isEmpty()) error("解析不到有效视频流")
-        
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
         val total = tsUrls.size.toLong()
@@ -113,9 +118,7 @@ class Segmenter(
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val partFile = File(tmpDir, "$index.ts")
-                    if (!partFile.exists()) {
-                        client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
-                    }
+                    if (!partFile.exists()) client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
                     downloaded.incrementAndGet()
                 }
             }
@@ -125,10 +128,8 @@ class Segmenter(
         val mergedTs = File(targetDir, "$fileName.tmp_merged.ts")
         if (!ZeroCore.mergeFiles(tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
 
-        // 无损转成 MP4
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         withContext(Dispatchers.IO) { remuxTsToMp4(mergedTs, outMp4) }
-
         tmpDir.deleteRecursively(); mergedTs.delete()
         onTick(total, total, 0)
         outMp4
@@ -137,9 +138,7 @@ class Segmenter(
     private suspend fun extractTsUrls(url: String, visited: MutableSet<String>): List<String> = withContext(Dispatchers.IO) {
         if (visited.contains(url)) return@withContext emptyList()
         visited.add(url)
-        // 如果直接是 TS，说明用户点到了某个分片，现在把他转为 m3u8 索引去抓
         val finalUrl = if (url.contains(".ts")) url.substringBeforeLast("/").plus("/index.m3u8") else url
-        
         val text = client.newCall(Request.Builder().url(finalUrl).build()).execute().use { it.body?.string() ?: "" }
         val urls = mutableListOf<String>()
         for (line in text.lines()) {

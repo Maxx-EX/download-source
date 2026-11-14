@@ -7,15 +7,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,7 +43,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-            
             LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
 
             if (updateInfo != null) {
@@ -85,8 +80,6 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 @Composable
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
-    
-    // 播放器状态 (支持本地文件和在线播放)
     var playingUri by remember { mutableStateOf<Uri?>(null) }
 
     if (playingUri != null) {
@@ -104,22 +97,15 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             }
         }
     ) { padding ->
-        AnimatedContent(
-            targetState = currentTab,
-            transitionSpec = {
-                if (targetState.ordinal > initialState.ordinal) (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it } + fadeOut())
-                else (slideInHorizontally { -it } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
-            }, label = "tab"
-        ) { tab ->
-            Box(Modifier.padding(padding).fillMaxSize()) {
-                when (tab) {
-                    Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
-                    Tab.BROWSER -> BrowserScreen(
-                        onPlayVideo = { playingUri = Uri.fromFile(it) },
-                        onPlayStream = { playingUri = Uri.parse(it) }
-                    )
-                    Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
-                }
+        // 修复：使用 when 直接切换，完全避免 Compose 动画缓存导致的 WebView 泄漏闪退
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            when (currentTab) {
+                Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings)
+                Tab.BROWSER -> BrowserScreen(
+                    onPlayVideo = { playingUri = Uri.fromFile(it) },
+                    onPlayStream = { playingUri = Uri.parse(it) }
+                )
+                Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
             }
         }
     }
@@ -130,58 +116,87 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
+    
     var showAddDialog by remember { mutableStateOf(initialShareUrl != null) }
     var prefillUrl by remember { mutableStateOf(initialShareUrl ?: "") }
     var dirPath by remember { mutableStateOf(DirStore.resolveDownloadDir(ctx).absolutePath) }
     
+    // 多选模式
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedTasks = remember { mutableStateListOf<String>() }
+
     LifecycleResumeEffect(Unit) { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath; onPauseOrDispose {} }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                    Text(if (isSelectionMode) "已选择 ${selectedTasks.size} 项" else "Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
-                IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
+                if (isSelectionMode) {
+                    IconButton(onClick = { 
+                        selectedTasks.forEach { DownloadManager.remove(ctx, it) }
+                        selectedTasks.clear()
+                        isSelectionMode = false
+                    }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+                    IconButton(onClick = { isSelectionMode = false; selectedTasks.clear() }) { Icon(Icons.Default.Close, null, tint = palette.onSurface) }
+                } else {
+                    if (tasks.isNotEmpty()) IconButton(onClick = { isSelectionMode = true }) { Icon(Icons.Default.Checklist, null, tint = palette.onSurface) }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
+                }
             }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("存至: ", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 Text(dirPath, color = palette.onSurface, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) { Text("更改") }
+                if (!isSelectionMode) TextButton(onClick = { onPickFolder { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath } }) { Text("更改") }
             }
             Spacer(Modifier.height(10.dp))
+            
             if (tasks.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务 (￣▽￣)", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(tasks, key = { it.id }) { task ->
-                        DownloadCard(
-                            task = task, 
-                            onPause = { DownloadManager.pause(ctx, task.id) }, 
-                            onResume = { DownloadManager.start(ctx, task.id) }, 
-                            onDelete = { DownloadManager.remove(ctx, task.id) },
-                            onOpen = { }
-                        )
+                        if (isSelectionMode) {
+                            Row(Modifier.fillMaxWidth().clickable {
+                                if (selectedTasks.contains(task.id)) selectedTasks.remove(task.id) else selectedTasks.add(task.id)
+                            }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = selectedTasks.contains(task.id), onCheckedChange = { 
+                                    if (it) selectedTasks.add(task.id) else selectedTasks.remove(task.id) 
+                                })
+                                DownloadCard(task = task, onPause = {}, onResume = {}, onDelete = {}, onOpen = {})
+                            }
+                        } else {
+                            DownloadCard(
+                                task = task, 
+                                onPause = { DownloadManager.pause(ctx, task.id) }, 
+                                onResume = { DownloadManager.start(ctx, task.id) }, 
+                                onDelete = { DownloadManager.remove(ctx, task.id) },
+                                onOpen = { }
+                            )
+                        }
                     }
                 }
             }
         }
 
-        FloatingActionButton(
-            onClick = { showAddDialog = true; prefillUrl = "" },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-            containerColor = palette.primary.first(),
-            shape = androidx.compose.foundation.shape.CircleShape
-        ) {
-            Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+        if (!isSelectionMode) {
+            FloatingActionButton(
+                onClick = { showAddDialog = true; prefillUrl = "" },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                containerColor = palette.primary.first(),
+                shape = androidx.compose.foundation.shape.CircleShape
+            ) {
+                Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            }
         }
     }
 
     if (showAddDialog) {
-        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads ->
-            DownloadManager.add(ctx, url, name, threads, File(DirStore.resolveDownloadDir(ctx).absolutePath))
+        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads, speed ->
+            DownloadManager.add(ctx, url, name, threads, speed, File(DirStore.resolveDownloadDir(ctx).absolutePath))
             showAddDialog = false
         }
     }

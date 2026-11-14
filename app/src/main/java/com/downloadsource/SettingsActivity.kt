@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -23,9 +24,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.core.UpdateManager
 import com.downloadsource.storage.BrowserPrefs
@@ -51,6 +55,7 @@ fun SettingsScreen(onClose: () -> Unit) {
     val palette = LocalPalette.current
     var themeStyle by remember { mutableIntStateOf(ThemeStore.getThemeStyle(ctx)) }
     var engine by remember { mutableStateOf(BrowserPrefs.getEngine(ctx)) }
+    var showDonate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
 
@@ -73,11 +78,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                         scope.launch {
                             val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME)
                             checking = false
-                            if (info != null) {
-                                UpdateManager.showUpdateDialog(ctx, info)
-                            } else {
-                                Toast.makeText(ctx, "当前已是最新版 (●'◡'●)", Toast.LENGTH_SHORT).show()
-                            }
+                            if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版 (●'◡'●)", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -109,6 +110,8 @@ fun SettingsScreen(onClose: () -> Unit) {
             }
 
             SettingsGroup {
+                SettingsRow("镜像源管理", "GitHub 加速", Icons.Default.Link) { ctx.startActivity(Intent(ctx, SourceManageActivity::class.java)) }
+                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 SettingsRow("清理下载缓存", "清理临时分片", Icons.Default.DeleteSweep) {
                     val dir = DirStore.resolveDownloadDir(ctx)
                     var count = 0
@@ -120,6 +123,21 @@ fun SettingsScreen(onClose: () -> Unit) {
                     DownloadManager.tasks.value.forEach { DownloadManager.remove(ctx, it.id) }
                     Toast.makeText(ctx, "记录已清空", Toast.LENGTH_SHORT).show()
                 }
+                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
+                // 赞赏码入口回归
+                SettingsRow("赞赏码", "请我喝杯咖啡", Icons.Default.Favorite) { showDonate = true }
+            }
+        }
+    }
+
+    if (showDonate) {
+        Dialog(onDismissRequest = { showDonate = false }) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("感谢赞助 (๑•̀ㅂ•́)و✧", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
+                Spacer(Modifier.height(16.dp))
+                Image(painter = painterResource(id = R.drawable.donate_qr), contentDescription = "QR", contentScale = ContentScale.Fit, modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { showDonate = false }, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
             }
         }
     }

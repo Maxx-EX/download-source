@@ -69,6 +69,11 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
     
     var isDarkMode by remember { mutableStateOf(false) }
 
+    // 销毁时释放 WebView 防止内存泄漏闪退
+    DisposableEffect(Unit) {
+        onDispose { webView?.destroy() }
+    }
+
     BackHandler(enabled = canGoBack) { webView?.goBack() }
 
     Box(modifier.fillMaxSize()) {
@@ -123,7 +128,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                             onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
-                            // 修复：参数类型与父类严格一致
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                 val url = request.url.toString()
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
@@ -156,7 +160,6 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
                     webView = it 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         it.settings.forceDark = if (isDarkMode) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
-                        it.reload()
                     }
                 },
                 modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).background(palette.surface)
@@ -175,6 +178,23 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
             Column(Modifier.padding(16.dp)) {
                 Text("浏览器操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface, modifier = Modifier.padding(bottom = 12.dp))
                 BrowserMenuItem("回到主页", Icons.Default.Home, palette.onSurface) { webView?.loadUrl("https://www.bing.com"); showMenuSheet = false }
+                
+                // 功能：提取网页所有图片
+                BrowserMenuItem("提取网页图片", Icons.Default.Image, palette.onSurface) {
+                    webView?.evaluateJavascript("""
+                        (function() {
+                            var imgs = document.getElementsByTagName('img');
+                            var urls = [];
+                            for (var i=0; i<imgs.length; i++) {
+                                if (imgs[i].src && imgs[i].width > 100) urls.push(imgs[i].src);
+                            }
+                            window.location.href = 'downloadsource_pic://' + JSON.stringify(urls);
+                        })();
+                    """.trimIndent()) { _ -> }
+                    showMenuSheet = false
+                    android.widget.Toast.makeText(ctx, "正在提取图片...", android.widget.Toast.LENGTH_SHORT).show()
+                }
+
                 BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
                 BrowserMenuItem("我的书签", Icons.Default.Bookmarks, palette.onSurface) { showBookmarkList = true; showMenuSheet = false }
                 BrowserMenuItem(if (isDarkMode) "关闭夜间模式" else "强制夜间模式", Icons.Default.DarkMode, palette.onSurface) { isDarkMode = !isDarkMode; showMenuSheet = false }
@@ -208,6 +228,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
+    // 历史记录
     if (showHistoryList) {
         val history = BrowserHistoryStore.getHistory(ctx)
         Dialog(onDismissRequest = { showHistoryList = false }) {
@@ -222,6 +243,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
         }
     }
 
+    // 书签
     if (showBookmarkList) {
         val bookmarks = BookmarkStore.get(ctx)
         Dialog(onDismissRequest = { showBookmarkList = false }) {
@@ -235,8 +257,8 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, m
     }
 
     if (showDownloadDialog) {
-        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads ->
-            DownloadManager.add(ctx, url, name, threads, DirStore.resolveDownloadDir(ctx))
+        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed ->
+            DownloadManager.add(ctx, url, name, threads, speed, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }
     }
