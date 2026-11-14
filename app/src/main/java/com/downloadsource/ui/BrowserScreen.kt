@@ -116,7 +116,7 @@ fun BrowserScreen(onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit, o
                 LazyRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(openedTabs) { tabUrl ->
                         val isActive = tabUrl == currentUrl
-                        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (isActive) palette.primary.copy(alpha = 0.2f) else palette.surface).clickable { webView?.loadUrl(tabUrl) }.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (isActive) palette.primary.first().copy(alpha = 0.2f) else palette.surface).clickable { webView?.loadUrl(tabUrl) }.padding(horizontal = 12.dp, vertical = 4.dp)) {
                             Text(tabUrl.substringAfter("//").take(15), color = if (isActive) palette.primary.first() else palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         }
                     }

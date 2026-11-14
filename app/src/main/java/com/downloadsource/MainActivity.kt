@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
 
 enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
@@ -119,7 +120,6 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             containerColor = Color.Transparent,
             bottomBar = {
                 NavigationBar(containerColor = LocalPalette.current.surface) {
-                    // 小功能：底部导航栏点击动画
                     NavigationBarItem(selected = currentTab == Tab.DOWNLOAD, onClick = { currentTab = Tab.DOWNLOAD }, icon = { Icon(Icons.Default.Home, null) }, label = { Text("下载") })
                     NavigationBarItem(selected = currentTab == Tab.BROWSER, onClick = { currentTab = Tab.BROWSER }, icon = { Icon(Icons.Default.Search, null) }, label = { Text("搜索") })
                     NavigationBarItem(selected = currentTab == Tab.LIBRARY, onClick = { currentTab = Tab.LIBRARY }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("文件库") })
@@ -139,14 +139,12 @@ fun MainScaffold(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit
             }
         }
         
-        // 大功能：可拖拽悬浮球，长按弹出快捷历史记录与嗅探
         DraggableFloatingButton(
             onClick = { currentTab = Tab.DOWNLOAD },
             onLongClick = { showFabMenu = true }
         )
     }
 
-    // 小功能：长按悬浮球弹出的高级菜单
     if (showFabMenu) {
         ModalBottomSheet(onDismissRequest = { showFabMenu = false }, containerColor = LocalPalette.current.surface) {
             Column(Modifier.padding(16.dp)) {
@@ -260,7 +258,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
             }
             Spacer(Modifier.height(16.dp))
             
-            // 主页搜索框
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(horizontal = 16.dp, vertical = 4.dp)) {
                 Icon(Icons.Default.Search, null, tint = palette.onSurfaceDim)
                 BasicTextField(
