@@ -39,8 +39,10 @@ object DownloadManager {
         scope.launch {
             try {
                 // 拦截并尝试解析网盘链接
-                val parsedUrl = if (url.contains("pan.") || url.contains("lanzou") || url.contains("123pan")) {
-                    DiskParser.parse(context, url, null)
+                val shareInfo = NetDiskParser.detect(url)
+                val parsedUrl = if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
+                    // 把自动识别出来的提取码传进去
+                    DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
                 } else url
                 
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName

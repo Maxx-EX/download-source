@@ -30,19 +30,19 @@ jobs:
       - name: Rename & collect
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/zeta/debug/app-zeta-debug.apk   out/DownloadSource-Zeta-v2.6.0.apk
-          cp app/build/outputs/apk/omega/debug/app-omega-debug.apk out/DownloadSource-Omega-v2.6.0.apk
+          cp app/build/outputs/apk/zeta/debug/app-zeta-debug.apk   out/DownloadSource-Zeta-v2.7.0.apk
+          cp app/build/outputs/apk/omega/debug/app-omega-debug.apk out/DownloadSource-Omega-v2.7.0.apk
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
-        with: { name: zeta-debug-apk, path: out/DownloadSource-Zeta-v2.6.0.apk }
+        with: { name: zeta-debug-apk, path: out/DownloadSource-Zeta-v2.7.0.apk }
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.6.0-build${{ github.run_number }}
-          name: Download source v2.6.0
+          tag_name: v2.7.0-build${{ github.run_number }}
+          name: Download source v2.7.0
           body_path: CHANGELOG.md # 直接读取我们刚刚创建的 md 文件
           files: |
-            out/DownloadSource-Omega-v2.6.0.apk
+            out/DownloadSource-Omega-v2.7.0.apk
           draft: false
           prerelease: false
         env:

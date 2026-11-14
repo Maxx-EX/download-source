@@ -1,6 +1,7 @@
 package com.downloadsource
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -123,10 +124,30 @@ fun SettingsScreen(onClose: () -> Unit) {
                     DownloadManager.tasks.value.forEach { DownloadManager.remove(ctx, it.id) }
                     Toast.makeText(ctx, "记录已清空", Toast.LENGTH_SHORT).show()
                 }
+            }
+            
+            SettingsGroup {
+                // 新增 GitHub 直达入口
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Maxx-EX/download-source")))
+                    }.padding(16.dp), verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(painter = painterResource(id = R.drawable.ic_github), contentDescription = "GitHub", modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("GitHub 仓库", color = palette.onSurface, fontWeight = FontWeight.Medium)
+                        Text("Maxx-EX/download-source", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = palette.onSurfaceDim)
+                }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
-                // 赞赏码入口回归
                 SettingsRow("赞赏码", "请我喝杯咖啡", Icons.Default.Favorite) { showDonate = true }
             }
+            
+            Spacer(Modifier.height(24.dp))
+            Text("Zero-core Engine · Made with ❤️", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(24.dp))
         }
     }
 
