@@ -13,15 +13,13 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 class Segmenter(
     private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
 ) {
     suspend fun download(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
-        if (url.contains(".m3u8") || url.contains(".m3u")) {
+        // 如果是 TS 或 M3U8，强制走 M3U8 重组（防止生成无用的乱码文件）
+        if (url.contains(".m3u8") || url.contains(".m3u") || url.endsWith(".ts", true)) {
             return@coroutineScope downloadM3u8(url, targetDir, fileName, parts, onTick)
         }
 
@@ -54,12 +52,10 @@ class Segmenter(
             (0 until n).map { i ->
                 async(Dispatchers.IO) {
                     val start = i * total / n; val end = if (i == n - 1) total - 1 else (i + 1) * total / n - 1
-                    val partFile = File(tmpDir, "$fileName.part$i")
-                    downloadRange(url, start, end, partFile, downloaded)
+                    retryDownloadRange(url, start, end, File(tmpDir, "$fileName.part$i"), downloaded)
                 }
             }.awaitAll()
             ticker.cancel()
-
             val partPaths = (0 until n).map { File(tmpDir, "$fileName.part$it").absolutePath }.toTypedArray()
             val out = File(targetDir, fileName)
             ZeroCore.fallocate(out.absolutePath, total)
@@ -72,18 +68,19 @@ class Segmenter(
         }
     }
 
+    private suspend fun retryDownloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong) {
+        var retries = 3
+        while (retries > 0) {
+            try { downloadRange(url, start, end, file, downloaded); return } 
+            catch (e: Exception) { retries--; if (retries == 0) throw e; delay(1500) }
+        }
+    }
+
     private fun downloadRange(url: String, start: Long, end: Long, file: File, downloaded: AtomicLong) {
         val existing = if (file.exists()) file.length() else 0L
         val realStart = start + existing
-        
-        // 修复 1：如果已经下完，补上进度并跳过
-        if (realStart > end) {
-            downloaded.addAndGet(existing)
-            return
-        }
-        
-        // 修复 2：把已下载的大小计入计数器，防止暂停恢复后进度归零
-        downloaded.addAndGet(existing)
+        if (realStart > end) { downloaded.addAndGet(existing); return }
+        if (existing > 0 && downloaded.get() == 0L) downloaded.addAndGet(existing)
         
         val req = Request.Builder().url(url).header("Range", "bytes=$realStart-$end").build()
         client.newCall(req).execute().use { resp ->
@@ -93,27 +90,23 @@ class Segmenter(
                 resp.body?.byteStream()?.use { ins ->
                     val buf = ByteArray(128 * 1024)
                     while (true) {
-                        val r = ins.read(buf)
-                        if (r <= 0) break
-                        raf.write(buf, 0, r)
-                        downloaded.addAndGet(r.toLong())
+                        val r = ins.read(buf); if (r <= 0) break
+                        raf.write(buf, 0, r); downloaded.addAndGet(r.toLong())
                     }
                 }
             }
         }
     }
 
+    // 聚合流功能：如果传入的是 TS，则把网页的前缀拼接起来去递归抓取
     private suspend fun downloadM3u8(url: String, targetDir: File, fileName: String, parts: Int, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         val tsUrls = extractTsUrls(url, mutableSetOf())
-        if (tsUrls.isEmpty()) error("M3U8 解析为空")
+        if (tsUrls.isEmpty()) error("解析不到有效视频流")
         
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
         val total = tsUrls.size.toLong()
-        
-        val ticker = launch(Dispatchers.Default) {
-            while (isActive) { delay(300); onTick(downloaded.get(), total, 0) }
-        }
+        val ticker = launch(Dispatchers.Default) { while (isActive) { delay(300); onTick(downloaded.get(), total, 0) } }
 
         val semaphore = Semaphore(parts)
         tsUrls.mapIndexed { index, tsUrl ->
@@ -121,9 +114,7 @@ class Segmenter(
                 semaphore.withPermit {
                     val partFile = File(tmpDir, "$index.ts")
                     if (!partFile.exists()) {
-                        client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp ->
-                            partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0))
-                        }
+                        client.newCall(Request.Builder().url(tsUrl).build()).execute().use { resp -> partFile.writeBytes(resp.body?.bytes() ?: ByteArray(0)) }
                     }
                     downloaded.incrementAndGet()
                 }
@@ -132,35 +123,29 @@ class Segmenter(
         ticker.cancel()
 
         val mergedTs = File(targetDir, "$fileName.tmp_merged.ts")
-        val partPaths = tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray()
-        if (!ZeroCore.mergeFiles(partPaths, mergedTs.absolutePath)) error("合并 TS 失败")
+        if (!ZeroCore.mergeFiles(tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
 
+        // 无损转成 MP4
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         withContext(Dispatchers.IO) { remuxTsToMp4(mergedTs, outMp4) }
 
-        tmpDir.deleteRecursively()
-        mergedTs.delete()
+        tmpDir.deleteRecursively(); mergedTs.delete()
         onTick(total, total, 0)
         outMp4
     }
 
-    // 修复 3：递归解析嵌套的 M3U8 子列表，防死循环
     private suspend fun extractTsUrls(url: String, visited: MutableSet<String>): List<String> = withContext(Dispatchers.IO) {
         if (visited.contains(url)) return@withContext emptyList()
         visited.add(url)
-
-        val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
-        val lines = text.lines()
-        val urls = mutableListOf<String>()
+        // 如果直接是 TS，说明用户点到了某个分片，现在把他转为 m3u8 索引去抓
+        val finalUrl = if (url.contains(".ts")) url.substringBeforeLast("/").plus("/index.m3u8") else url
         
-        for (line in lines) {
+        val text = client.newCall(Request.Builder().url(finalUrl).build()).execute().use { it.body?.string() ?: "" }
+        val urls = mutableListOf<String>()
+        for (line in text.lines()) {
             if (line.isNotBlank() && !line.startsWith("#")) {
-                val absUrl = if (line.startsWith("http")) line else url.substringBeforeLast('/') + "/" + line
-                if (absUrl.contains(".m3u8")) {
-                    urls.addAll(extractTsUrls(absUrl, visited)) // 递归展开
-                } else {
-                    urls.add(absUrl)
-                }
+                val absUrl = if (line.startsWith("http")) line else finalUrl.substringBeforeLast('/') + "/" + line
+                if (absUrl.contains(".m3u8")) urls.addAll(extractTsUrls(absUrl, visited)) else urls.add(absUrl)
             }
         }
         return@withContext urls
@@ -171,37 +156,25 @@ class Segmenter(
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
             extractor.setDataSource(input.absolutePath)
-            val trackCount = extractor.trackCount
             val trackMap = HashMap<Int, Int>()
             val buffer = ByteBuffer.allocate(1 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
-
-            for (i in 0 until trackCount) {
+            for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
                 if (mime.startsWith("video/") || mime.startsWith("audio/")) {
-                    extractor.selectTrack(i)
-                    trackMap[i] = muxer.addTrack(format)
+                    extractor.selectTrack(i); trackMap[i] = muxer.addTrack(format)
                 }
             }
             muxer.start()
-
             while (true) {
                 info.size = extractor.readSampleData(buffer, 0)
                 if (info.size < 0) break
-                info.presentationTimeUs = extractor.sampleTime
-                info.flags = extractor.sampleFlags
-                info.offset = 0
+                info.presentationTimeUs = extractor.sampleTime; info.flags = extractor.sampleFlags; info.offset = 0
                 val trackIdx = extractor.sampleTrackIndex
-                if (trackMap.containsKey(trackIdx)) {
-                    muxer.writeSampleData(trackMap[trackIdx]!!, buffer, info)
-                }
+                if (trackMap.containsKey(trackIdx)) muxer.writeSampleData(trackMap[trackIdx]!!, buffer, info)
                 extractor.advance()
             }
-        } finally {
-            runCatching { muxer.stop() }
-            runCatching { muxer.release() }
-            runCatching { extractor.release() }
-        }
+        } finally { runCatching { muxer.stop() }; runCatching { muxer.release() }; runCatching { extractor.release() } }
     }
 }

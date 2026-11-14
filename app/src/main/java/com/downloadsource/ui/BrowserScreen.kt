@@ -24,7 +24,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,11 +35,9 @@ import androidx.compose.ui.window.Dialog
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
-import com.downloadsource.web.SafeWebViewClient
 import java.net.URLEncoder
 
 @SuppressLint("SetJavaScriptEnabled")
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
@@ -51,16 +48,9 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
     var progress by remember { mutableFloatStateOf(0f) }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
-
-    // 引擎切换：从本地读取
-    var engine by remember { mutableStateOf(BrowserPrefs.getEngine(ctx)) }
-    val engines = listOf("Bing", "Baidu", "Google")
-    var showEngineMenu by remember { mutableStateOf(false) }
-
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
-
-    // 资源嗅探列表
+    
     val sniffedUrls = remember { mutableStateListOf<String>() }
     var showSniffList by remember { mutableStateOf(false) }
 
@@ -68,49 +58,27 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // 地址栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    placeholder = { Text("搜索或输入网址") },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    value = urlInput, onValueChange = { urlInput = it }, placeholder = { Text("搜索或输入网址") }, leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = { if (urlInput.isNotEmpty()) IconButton(onClick = { urlInput = "" }) { Icon(Icons.Default.Close, null) } },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(24.dp)),
+                    singleLine = true, modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = {
                         var q = urlInput.trim()
                         if (q.isNotEmpty()) {
+                            val engine = BrowserPrefs.getEngine(ctx)
                             val target = if (q.startsWith("http")) q else {
-                                // 修复引擎拼接 Bug
                                 q = URLEncoder.encode(q, "UTF-8")
-                                when (engine) {
-                                    "Baidu" -> "https://www.baidu.com/s?wd=$q"
-                                    "Google" -> "https://www.google.com/search?q=$q"
-                                    else -> "https://www.bing.com/search?q=$q"
-                                }
+                                when (engine) { "Baidu" -> "https://www.baidu.com/s?wd=$q"; "Google" -> "https://www.google.com/search?q=$q"; else -> "https://www.bing.com/search?q=$q" }
                             }
                             webView?.loadUrl(target)
                             urlInput = target
                         }
                     })
                 )
-                Box {
-                    TextButton(onClick = { showEngineMenu = true }) { Text(engine, color = palette.onSurface) }
-                    DropdownMenu(expanded = showEngineMenu, onDismissRequest = { showEngineMenu = false }) {
-                        engines.forEach { e -> 
-                            DropdownMenuItem(text = { Text(e) }, onClick = { 
-                                engine = e
-                                BrowserPrefs.setEngine(ctx, e) // 持久化
-                                showEngineMenu = false 
-                            }) 
-                        }
-                    }
-                }
             }
 
-            // 操作栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row {
                     IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (canGoBack) palette.onSurface else palette.onSurfaceDim) }
@@ -127,43 +95,67 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
                     WebView(c).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false // 允许自动播放
-
-                        // 1. 嗅探拦截所有媒体资源
-                        webViewClient = object : SafeWebViewClient(onDownloadRequest = { url ->
-                            pendingDownloadUrl = url
-                            showDownloadDialog = true
-                        }) {
+                        settings.mediaPlaybackRequiresUserGesture = false
+                        // 允许 JS 注入弹窗
+                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        
+                        webViewClient = object : WebViewClient() {
+                            // 1. 嗅探拦截（解决无法捕捉深层请求问题）
                             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                                 val url = request?.url.toString()
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
-                                if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip", "ts", "mkv", "avi")) {
+                                if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip", "ts", "mkv", "avi") && !url.contains("favicon")) {
                                     if (!sniffedUrls.contains(url)) sniffedUrls.add(url)
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
+                            
+                            // 2. 网页发生点击等操作时的 JS 拦截桥接
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url.toString()
+                                if (url.contains(".m3u8") || url.contains(".apk") || url.contains(".mp4")) {
+                                    pendingDownloadUrl = url
+                                    showDownloadDialog = true
+                                    return true // 拦截导航，转为下载
+                                }
+                                return false
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                if (url != null && !url.startsWith("javascript")) urlInput = url
+                                if (url != null && !url.startsWith("javascript")) { urlInput = url; currentUrl = url }
                             }
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                 super.doUpdateVisitedHistory(view, url, isReload)
                                 canGoBack = view?.canGoBack() ?: false
                                 canGoForward = view?.canGoForward() ?: false
                             }
-                        }
-
-                        // 2. 拦截网页内部直接触发的 APK 或文件下载
-                        setDownloadListener { url, _, _, mimetype, _ ->
-                            if (url.startsWith("http")) {
-                                pendingDownloadUrl = url
-                                showDownloadDialog = true
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                // 3. 注入终极抓取脚本 (抓取网页隐藏的下载链接和 Blob)
+                                view?.evaluateJavascript("""
+                                    javascript:(function(){
+                                        document.addEventListener('click', function(e){
+                                            var el = e.target.closest('a, button');
+                                            if(el && el.href) {
+                                                var href = el.href;
+                                                if(href.includes('.m3u8') || href.includes('.mp4') || href.includes('.apk')){
+                                                    window.location.href = href;
+                                                }
+                                            }
+                                        }, true);
+                                    })();
+                                """.trimIndent(), null)
                             }
                         }
-
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress / 100f }
+                        
+                        // 4. HTML5 内的下载按钮 (点击直接触发)
+                        setDownloadListener { url, _, _, _, _ -> 
+                            pendingDownloadUrl = url
+                            showDownloadDialog = true 
                         }
+                        
+                        webChromeClient = object : WebChromeClient() { override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress / 100f } }
                         loadUrl(currentUrl)
                         webView = this
                     }
@@ -173,64 +165,34 @@ fun BrowserScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        // 悬浮嗅探按钮
-        AnimatedVisibility(
-            visible = sniffedUrls.isNotEmpty(),
-            enter = scaleIn(),
-            exit = scaleOut(),
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
-        ) {
-            FloatingActionButton(
-                onClick = { showSniffList = true },
-                containerColor = palette.primary.first(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Box {
-                    Icon(Icons.Default.Layers, "Sniffed", tint = Color.White)
-                    // 红点提示
-                    Box(Modifier.size(10.dp).background(Color.Red, RoundedCornerShape(50)).align(Alignment.TopEnd))
-                }
+        AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
+            FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first(), shape = RoundedCornerShape(16.dp)) {
+                Box { Icon(Icons.Default.Layers, "Sniffed", tint = Color.White); Box(Modifier.size(10.dp).background(Color.Red, RoundedCornerShape(50)).align(Alignment.TopEnd)) }
             }
         }
     }
 
-    // 下载弹窗
     if (showDownloadDialog) {
         AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads ->
             DownloadManager.add(ctx, url, name, threads, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
-            android.widget.Toast.makeText(ctx, "已加入下载队列 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
-    // 嗅探结果弹窗
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
-            Column(
-                Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)
-            ) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("嗅探到的资源", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
+                    Text("抓取到的媒体 (已去重)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
                     TextButton(onClick = { sniffedUrls.clear(); showSniffList = false }) { Text("清空") }
                 }
-                Spacer(Modifier.height(8.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(sniffedUrls) { url ->
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(palette.onSurface.copy(alpha = 0.05f)).clickable {
-                                pendingDownloadUrl = url
-                                showDownloadDialog = true
-                                showSniffList = false
-                            }.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(palette.onSurface.copy(alpha = 0.05f)).clickable { pendingDownloadUrl = url; showDownloadDialog = true; showSniffList = false }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
-                            Icon(
-                                when(ext) { "mp4", "mkv", "avi" -> Icons.Default.VideoFile; "mp3" -> Icons.Default.AudioFile; "apk" -> Icons.Default.Android; else -> Icons.Default.InsertDriveFile },
-                                null, tint = palette.primary.first()
-                            )
+                            Icon(when(ext) { "mp4", "mkv", "avi" -> Icons.Default.VideoFile; "mp3" -> Icons.Default.AudioFile; "apk" -> Icons.Default.Android; else -> Icons.Default.InsertDriveFile }, null, tint = palette.primary.first())
                             Spacer(Modifier.width(12.dp))
-                            Text(url.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                            Text(url.substringAfterLast('/').substringBefore('?'), maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

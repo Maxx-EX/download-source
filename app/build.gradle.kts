@@ -18,7 +18,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 5
-        versionName = "2.3.0"
+        versionName = "2.4.0"
 
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
