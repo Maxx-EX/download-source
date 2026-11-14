@@ -37,11 +37,18 @@ object DownloadManager {
         TaskStore.save(context, _tasks.value)
         
         scope.launch {
-            // 尝试解析网盘等特殊链接
-            val realUrl = NetDiskParser.tryParse(url) ?: url
-            val realName = if (customName.isNullOrBlank()) probeRealFileName(realUrl) else customName
-            update(context, task.id) { it.copy(url = realUrl, fileName = realName) }
-            startTask(context, task.id)
+            try {
+                // 拦截并尝试解析网盘链接
+                val parsedUrl = if (url.contains("pan.") || url.contains("lanzou") || url.contains("123pan")) {
+                    DiskParser.parse(context, url, null)
+                } else url
+                
+                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl) else customName
+                update(context, task.id) { it.copy(url = parsedUrl, fileName = realName) }
+                startTask(context, task.id)
+            } catch (e: Exception) {
+                update(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
+            }
         }
     }
 
