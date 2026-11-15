@@ -8,14 +8,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -102,7 +99,6 @@ fun NetDiskScreen(onBack: () -> Unit) {
             Text(errorMsg!!, color = Color.Red, modifier = Modifier.padding(top = 16.dp))
         }
 
-        // 解析结果
         if (parsedFiles.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("共 ${parsedFiles.size} 个文件", fontWeight = FontWeight.Bold, color = palette.onSurface)
@@ -118,7 +114,9 @@ fun NetDiskScreen(onBack: () -> Unit) {
                 items(parsedFiles) { file ->
                     val isSelected = selectedFiles.contains(file.name)
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (isSelected) palette.primary.copy(alpha = 0.15f) else palette.surface)
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            // 修复：使用 primary.first().copy
+                            .background(if (isSelected) palette.primary.first().copy(alpha = 0.15f) else palette.surface)
                             .clickable { selectedFiles = if (isSelected) selectedFiles - file.name else selectedFiles + file.name }
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically

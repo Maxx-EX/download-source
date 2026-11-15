@@ -1,18 +1,17 @@
 package com.downloadsource.core.parser
 
+import com.downloadsource.core.DiskParser // 修复：导入 DiskParser
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.regex.Pattern
 
 object LanzouParser {
     private val client = OkHttpClient()
     private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     fun parse(url: String, pwd: String?): List<DiskParser.FileInfo> {
-        // 简化的蓝奏云解析逻辑（针对单文件直链）
         try {
             val req = Request.Builder().url(url).header("User-Agent", UA).build()
             client.newCall(req).execute().use { resp ->

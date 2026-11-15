@@ -1,6 +1,7 @@
 package com.downloadsource.core.parser
 
 import android.content.Context
+import com.downloadsource.core.DiskParser // 修复：导入 DiskParser
 import com.downloadsource.storage.CookieStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,14 +18,12 @@ object QuarkParser {
         val cookie = CookieStore.load(ctx, "quark") ?: error("请先在浏览器登录夸克网盘")
         val shareId = Regex("""/s/([a-zA-Z0-9]+)""").find(url)?.groupValues?.get(1) ?: error("链接识别失败")
 
-        // 1. 获取 stoken
         val tokenApi = "https://drive-pc.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc"
         val tokenBody = """{"pwd_id":"$shareId","passcode":"${pwd ?: ""}"}"""
         val tokenReq = Request.Builder().url(tokenApi).post(tokenBody.toRequestBody("application/json".toMediaType())).header("Cookie", cookie).build()
         val tokenJson = JSONObject(client.newCall(tokenReq).execute().body?.string() ?: "")
         val stoken = tokenJson.optJSONObject("data")?.optString("stoken") ?: error("获取Token失败，Cookie失效")
 
-        // 2. 递归获取文件树
         val results = mutableListOf<DiskParser.FileInfo>()
         fetchFolderRecursive(cookie, shareId, stoken, "0", results)
         results

@@ -1,5 +1,6 @@
 package com.downloadsource.core.parser
 
+import com.downloadsource.core.DiskParser // 修复：导入 DiskParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
