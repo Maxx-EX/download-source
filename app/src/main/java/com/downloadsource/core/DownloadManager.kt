@@ -39,6 +39,16 @@ object DownloadManager {
             mutex.withLock { _tasks.value = _tasks.value + task }
             TaskStore.save(context, _tasks.value)
             try {
+                // 如果配置了 Aria2 且服务器地址不为空，优先使用 Aria2
+                if (Aria2Manager.getServer(context).isNotBlank()) {
+                    val success = Aria2Manager.addTask(context, url)
+                    if (success) {
+                        remove(context, task.id) // 移除本地任务
+                        withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已成功推送到 Aria2 远程下载", android.widget.Toast.LENGTH_SHORT).show() }
+                        return@launch
+                    }
+                }
+
                 val shareInfo = NetDiskParser.detect(url)
                 if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
                     if (BuildConfig.CHANNEL == "zeta") {
@@ -95,11 +105,22 @@ object DownloadManager {
             } catch (e: Exception) { updateTaskState(context, id) { it.copy(status = TaskStatus.Failed, error = e.message) }; checkPending(context) }
         }
     }
+    
+    // 修复：补全缺失的方法
+    fun rename(context: Context, id: String, newName: String) {
+        val t = _tasks.value.find { it.id == id } ?: return
+        val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)
+        if (oldFile.exists()) oldFile.renameTo(newFile)
+        updateTaskState(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
+    }
+    
+    fun autoResumeTasks(context: Context) {
+        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
+    }
 
     fun pause(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) } }
     fun remove(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); _tasks.value = _tasks.value.filterNot { it.id == id }; TaskStore.save(context, _tasks.value) }
     private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }; TaskStore.save(context, _tasks.value) }
     private fun checkPending(context: Context) { if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } }
-    
     private fun probeRealFileName(url: String, headers: Map<String, String>): String { return "file_${System.currentTimeMillis()}.bin" }
 }

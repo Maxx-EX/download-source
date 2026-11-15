@@ -47,12 +47,10 @@ class MainActivity : ComponentActivity() {
                     MaterialTheme(typography = SafeTypography) {
                         var isLocked by remember { mutableStateOf(shouldLock()) }
                         var clipboardUrl by remember { mutableStateOf<String?>(null) }
-                        // 修复：记录上次处理的剪贴板，防止死循环弹窗
                         val lastClipUrl = remember { mutableStateOf("") }
                         
                         LifecycleResumeEffect(Unit) {
                             if (shouldLock()) isLocked = true
-                            
                             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val text = cm.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
                             if (text != null && (text.startsWith("http") || text.contains("pan.quark"))) {
