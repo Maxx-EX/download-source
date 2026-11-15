@@ -43,7 +43,7 @@ object DownloadManager {
                     val success = Aria2Manager.addTask(context, url)
                     if (success) {
                         remove(context, task.id)
-                        withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已推送到 Aria2 下载", android.widget.Toast.LENGTH_SHORT).show() }
+                        withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已推送到 Aria2 下载啦 (๑•̀ㅂ•́)و✧啦 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
                         return@launch
                     }
                 }

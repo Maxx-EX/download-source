@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
                             if (clipboardUrl != null) {
                                 AlertDialog(
                                     onDismissRequest = { clipboardUrl = null },
-                                    title = { Text("检测到剪贴板链接") },
+                                    title = { Text("检测到剪贴板有链接哦 (★ ω ★)") },
                                     text = { Text("发现: ${clipboardUrl?.take(30)}...\n是否立即下载？") },
                                     confirmButton = { TextButton(onClick = { 
                                         DownloadManager.add(this@MainActivity, clipboardUrl!!, null, 8, 0, emptyMap(), DirStore.resolveDownloadDir(this@MainActivity))
@@ -149,7 +149,7 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
                 Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).clickable {
                     errorMsg = ""
                     if (key == "DEL") { if (inputPwd.isNotEmpty()) inputPwd = inputPwd.dropLast(1) } else { if (inputPwd.length < 8) inputPwd += key }
-                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码错误"; inputPwd = "" } }
+                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码不对哦 (￣ε(#￣)"; inputPwd = "" } }
                 }, contentAlignment = Alignment.Center) { if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) }
             }
         }
@@ -367,7 +367,7 @@ fun DownloadScreen() {
             }
 
             if (filteredTasks.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务 (￣▽￣)", color = palette.onSurfaceDim) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务呢 (￣▽￣)~*呢 (￣▽￣)~*", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(filteredTasks, key = { it.id }) { task ->

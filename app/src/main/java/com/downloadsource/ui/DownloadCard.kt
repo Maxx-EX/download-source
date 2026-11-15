@@ -79,15 +79,15 @@ fun DownloadCard(
                 val speedStr = if (animatedSpeed > 0) String.format("%.1f KB/s", animatedSpeed / 1024) else ""
                 val displayError = when {
                     task.error == null -> ""
-                    task.error!!.contains("canceled", true) || task.error!!.contains("cancelled", true) -> "任务已取消"
+                    task.error!!.contains("canceled", true) || task.error!!.contains("cancelled", true) -> "任务已取消 (￣▽￣) (￣▽￣)"
                     else -> task.error!!
                 }
                 
                 Text(
                     when (task.status) {
-                        TaskStatus.Failed -> "失败: $displayError"
-                        TaskStatus.Completed -> "已完成"
-                        TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
+                        TaskStatus.Failed -> "失败了: $displayError (´･_･`)"
+                        TaskStatus.Completed -> "下载完成啦 (●'◡'●)"
+                        TaskStatus.Paused -> "已暂停 (￣▽￣) · ${task.sizeText}"
                         else -> "${task.sizeText} ${if (speedStr.isNotEmpty()) "· $speedStr" else ""}"
                     },
                     color = if (task.status == TaskStatus.Failed) Color.Red else palette.onSurfaceDim,
@@ -126,17 +126,17 @@ fun DownloadCard(
                     SheetItem("其它应用打开", Icons.Default.OpenInNew, palette.onSurface) {
                         val file = File(task.outputPath ?: "")
                         if (file.exists()) {
-                            val uri = try { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file) } catch (e: Exception) { Toast.makeText(ctx, "文件路径异常", Toast.LENGTH_SHORT).show(); return@SheetItem }
+                            val uri = try { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file) } catch (e: Exception) { Toast.makeText(ctx, "文件路径好像不太对 (´･_･`)", Toast.LENGTH_SHORT).show(); return@SheetItem }
                             val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
                             try { ctx.startActivity(Intent.createChooser(intent, "打开文件")) } catch (_: Exception) { }
-                        } else Toast.makeText(ctx, "文件不存在", Toast.LENGTH_SHORT).show()
+                        } else Toast.makeText(ctx, "咦？文件不见了 (´･_･`)", Toast.LENGTH_SHORT).show()
                         showSheet = false
                     }
                     SheetItem("重命名", Icons.Default.Edit, palette.onSurface) { renameText = task.fileName; showRenameDialog = true; showSheet = false }
                     SheetItem("复制下载链接", Icons.Default.ContentCopy, palette.onSurface) {
                         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("URL", task.url))
-                        Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show(); showSheet = false
+                        Toast.makeText(ctx, "已复制到剪贴板 (๑•̀ㅂ•́)و✧到剪贴板 (๑•̀ㅂ•́)و✧", Toast.LENGTH_SHORT).show(); showSheet = false
                     }
                     SheetItem("删除", Icons.Default.Delete, Color.Red) { onDelete(); showSheet = false }
                     Spacer(Modifier.height(16.dp))

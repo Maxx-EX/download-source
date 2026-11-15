@@ -71,7 +71,7 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
             }
             Spacer(Modifier.height(16.dp))
             if (vaultFiles.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("保险箱空空如也", color = palette.onSurfaceDim) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("保险箱空空如也 (￣▽￣) (￣▽￣)", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(vaultFiles) { file ->
@@ -142,7 +142,7 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         filteredFiles = if (sortBy == "时间") filteredFiles.sortedByDescending { it.lastModified() } else filteredFiles.sortedByDescending { it.length() }
 
         if (filteredFiles.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有找到文件 (￣▽￣)", color = palette.onSurfaceDim) }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有找到文件哦 (´･_･`)", color = palette.onSurfaceDim) }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filteredFiles) { file ->
@@ -192,7 +192,7 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
                 Button(onClick = {
                     if (ThemeStore.verifyLockPassword(ctx, vaultPwd)) {
                         showVault = true; showVaultAuth = false; vaultPwd = ""
-                    } else android.widget.Toast.makeText(ctx, "密码错误", android.widget.Toast.LENGTH_SHORT).show()
+                    } else android.widget.Toast.makeText(ctx, "密码不对哦 (￣ε(#￣)", android.widget.Toast.LENGTH_SHORT).show()
                 }) { Text("解锁") }
             }
         }

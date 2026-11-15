@@ -63,13 +63,13 @@ fun SourceScreen() {
                     if (!enabledList.contains(url)) {
                         enabledList = enabledList + url
                         MirrorResolver.save(ctx, enabledList)
-                        Toast.makeText(ctx, "添加成功", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "添加成功，非常完美 (๑•̀ㅂ•́)و✧，非常完美 (๑•̀ㅂ•́)و✧", Toast.LENGTH_SHORT).show()
                         inputUrl = ""
                     } else {
-                        Toast.makeText(ctx, "该源已存在并启用", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "这个源已经在用啦 (￣▽￣)", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    Toast.makeText(ctx, "请输入合法的 URL", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, "这好像不是一个合法的链接呢 (・_・;)", Toast.LENGTH_SHORT).show()
                 }
             }) { Icon(Icons.Default.Add, null) }
         }

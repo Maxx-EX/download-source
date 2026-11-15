@@ -51,7 +51,7 @@ fun TampermonkeyScreen(onClose: () -> Unit) {
         
         if (scripts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无脚本，点击右上角 + 添加", color = palette.onSurfaceDim)
+                Text("还没有脚本哦，点右上角 + 添加一个吧 (๑•̀ㅂ•́)و✧", color = palette.onSurfaceDim)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {

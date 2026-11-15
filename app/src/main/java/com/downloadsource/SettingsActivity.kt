@@ -98,7 +98,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                             // 强制剥离后缀
                             val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME.substringBefore("-"))
                             checking = false; 
-                            if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版", Toast.LENGTH_SHORT).show() 
+                            if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版 (●'◡'●) (●'◡'●)", Toast.LENGTH_SHORT).show() 
                         } 
                     }
                 }
@@ -164,7 +164,7 @@ fun SettingsScreen(onClose: () -> Unit) {
             SettingsGroup {
                 SettingsRow("局域网互传", serverIp, Icons.Default.Wifi) {
                     if (LocalWebServer.isRunning) {
-                        LocalWebServer.stop(); serverIp = "未启动"; Toast.makeText(ctx, "服务器已关闭", Toast.LENGTH_SHORT).show()
+                        LocalWebServer.stop(); serverIp = "未启动"; Toast.makeText(ctx, "服务器关闭了，下次见 (￣▽￣)ノ", Toast.LENGTH_SHORT).show()
                     } else {
                         serverIp = LocalWebServer.start(ctx); Toast.makeText(ctx, "请在电脑访问: $serverIp", Toast.LENGTH_LONG).show()
                     }
@@ -174,7 +174,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                     val dir = DirStore.resolveDownloadDir(ctx)
                     var count = 0
                     dir.listFiles()?.filter { it.name.startsWith(".") && it.isDirectory }?.forEach { it.deleteRecursively(); count++ }
-                    Toast.makeText(ctx, "已清理 $count 个缓存", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, "已清理 $count 个缓存，干得漂亮 (๑•̀ㅂ•́)و✧，干得漂亮 (๑•̀ㅂ•́)و✧", Toast.LENGTH_SHORT).show()
                 }
             }
             
@@ -201,7 +201,7 @@ fun SettingsScreen(onClose: () -> Unit) {
 
     // 弹窗区域
     if (showPoem) {
-        AlertDialog(onDismissRequest = { showPoem = false }, title = { Text("发现隐藏内容 🎉") }, text = { Text(poemText) }, confirmButton = { TextButton(onClick = { showPoem = false }) { Text("好诗") } })
+        AlertDialog(onDismissRequest = { showPoem = false }, title = { Text("被你发现了隐藏彩蛋 🎉 (★ ω ★)") }, text = { Text(poemText) }, confirmButton = { TextButton(onClick = { showPoem = false }) { Text("好诗好诗 (๑•̀ㅂ•́)و✧好诗好诗 (๑•̀ㅂ•́)و✧ (๑•̀ㅂ•́)و✧") } })
     }
     
     if (showAria2Dialog) {
@@ -226,7 +226,7 @@ fun SettingsScreen(onClose: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     if (currentLock == null) {
-                        if (inputPwd.length >= 4) { ThemeStore.setLockPassword(ctx, inputPwd); currentLock = inputPwd; showPwdDialog = false } else Toast.makeText(ctx, "密码至少4位", Toast.LENGTH_SHORT).show()
+                        if (inputPwd.length >= 4) { ThemeStore.setLockPassword(ctx, inputPwd); currentLock = inputPwd; showPwdDialog = false } else Toast.makeText(ctx, "密码至少需要 4 位哦 (｀・ω・´)", Toast.LENGTH_SHORT).show()
                     } else { ThemeStore.setLockPassword(ctx, null); currentLock = null; showPwdDialog = false }
                 }) { Text("确定") }
             },
