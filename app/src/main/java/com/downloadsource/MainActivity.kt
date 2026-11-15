@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +47,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.core.UpdateManager
+import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.ui.*
@@ -67,12 +69,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var isLocked by remember { mutableStateOf(false) }
-
-            // 修复：在 Resume 时检查锁
             LifecycleResumeEffect(Unit) {
-                if (ThemeStore.getLockPassword(this@MainActivity) != null) {
-                    isLocked = true
-                }
+                if (ThemeStore.getLockPassword(this@MainActivity) != null) isLocked = true
                 onPauseOrDispose {}
             }
 
@@ -148,6 +146,10 @@ fun MainScaffold(
 ) {
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
+    
+    // 快捷导航内置浏览器状态
+    var browserUrlToLoad by remember { mutableStateOf<String?>(null) }
+    
     var triggerSniff by remember { mutableStateOf(false) }
     var triggerHistory by remember { mutableStateOf(false) }
 
@@ -157,7 +159,7 @@ fun MainScaffold(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = androidx.compose.ui.platform.LocalDensity.current
+        val density = LocalDensity.current
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val screenHeightPx = with(density) { maxHeight.toPx() }
         
@@ -173,21 +175,26 @@ fun MainScaffold(
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (currentTab) {
-                    Tab.DOWNLOAD -> DownloadScreen(initialShareUrl, onPickFolder, onOpenSettings, onOpenNetDisk)
+                    Tab.DOWNLOAD -> DownloadScreen(
+                        initialShareUrl, onPickFolder, onOpenSettings, onOpenNetDisk,
+                        onOpenBrowserUrl = { url -> browserUrlToLoad = url; currentTab = Tab.BROWSER }
+                    )
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
                         onPlayStream = { playingUri = Uri.parse(it) },
                         triggerSniff = triggerSniff,
                         onSniffHandled = { triggerSniff = false },
                         triggerHistory = triggerHistory,
-                        onHistoryHandled = { triggerHistory = false }
+                        onHistoryHandled = { triggerHistory = false },
+                        externalUrlToLoad = browserUrlToLoad,
+                        onUrlLoaded = { browserUrlToLoad = null }
                     )
                     Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
                 }
             }
         }
         
-        // 修复：悬浮球坐标与越界问题
+        // 悬浮球与点击事件穿透修复
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -204,7 +211,6 @@ fun MainScaffold(
                         onDragStart = { showMenu = false },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            // 严格限制在屏幕内部
                             offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidthPx - ballSizePx)
                             offsetY = (offsetY + dragAmount.y).coerceIn(0f, screenHeightPx - ballSizePx)
                             isHoveringBottomBar = offsetY > bottomBarThreshold
@@ -245,7 +251,13 @@ fun MainScaffold(
 }
 
 @Composable
-fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Unit, onOpenSettings: () -> Unit, onOpenNetDisk: () -> Unit) {
+fun DownloadScreen(
+    initialShareUrl: String?, 
+    onPickFolder: ((Uri) -> Unit) -> Unit, 
+    onOpenSettings: () -> Unit, 
+    onOpenNetDisk: () -> Unit,
+    onOpenBrowserUrl: (String) -> Unit
+) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
@@ -329,7 +341,11 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
             
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(shortcuts) { item ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.second))) }) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally, 
+                        // 增加可点击区域
+                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { onOpenBrowserUrl(item.second) }.padding(8.dp)
+                    ) {
                         Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
                             Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
                         }

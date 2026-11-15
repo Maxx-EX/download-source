@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.os.Build
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
@@ -44,6 +45,7 @@ import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
 import com.downloadsource.web.WebInterceptor
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
@@ -57,7 +59,9 @@ fun BrowserScreen(
     triggerSniff: Boolean,
     onSniffHandled: () -> Unit,
     triggerHistory: Boolean,
-    onHistoryHandled: () -> Unit
+    onHistoryHandled: () -> Unit,
+    externalUrlToLoad: String?,
+    onUrlLoaded: () -> Unit
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
@@ -67,6 +71,16 @@ fun BrowserScreen(
     var urlInput by remember { mutableStateOf(currentUrl) }
     var sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
     
+    // 外部 URL 加载
+    LaunchedEffect(externalUrlToLoad) {
+        if (externalUrlToLoad != null) {
+            webView?.loadUrl(externalUrlToLoad)
+            urlInput = externalUrlToLoad
+            currentUrl = externalUrlToLoad
+            onUrlLoaded()
+        }
+    }
+
     var isReadingMode by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
@@ -130,6 +144,22 @@ fun BrowserScreen(
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(webInterceptor, "AndroidBridge")
+                        
+                        // 新功能：长按网页图片/链接免嗅探直接下载
+                        setOnLongClickListener { view ->
+                            val hitTestResult = (view as WebView).hitTestResult
+                            val type = hitTestResult.type
+                            val extra = hitTestResult.extra
+                            if (type == WebView.HitTestResult.IMAGE_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE || type == WebView.HitTestResult.SRC_ANCHOR_TYPE) {
+                                if (extra != null) {
+                                    pendingDownloadUrl = extra
+                                    pendingFileName = null
+                                    showDownloadDialog = true
+                                    return@setOnLongClickListener true
+                                }
+                            }
+                            false
+                        }
                         
                         webViewClient = object : SafeWebViewClient(
                             onDownloadRequest = { url -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true },
@@ -248,7 +278,6 @@ fun BrowserScreen(
     }
 }
 
-// 修复：通过隐藏 body 下其它元素，只保留文章主体
 fun injectReaderMode(webView: WebView?) {
     val css = """
         javascript:(function() {
