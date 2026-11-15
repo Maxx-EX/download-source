@@ -2,7 +2,6 @@ package com.downloadsource
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,54 +37,58 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle // 修复：补全导入
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.downloadsource.core.DownloadManager
-import com.downloadsource.core.DownloadTask // 修复：补全导入
 import com.downloadsource.core.UpdateManager
 import com.downloadsource.ui.*
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            var isLocked by remember { mutableStateOf(false) }
-            LifecycleResumeEffect(Unit) {
-                if (ThemeStore.getLockPassword(this@MainActivity) != null) {
-                    isLocked = true
-                }
-                onPauseOrDispose {}
-            }
-
-            if (isLocked) {
-                SecureLockScreen(onUnlock = { isLocked = false })
-                return@setContent
-            }
-
+            // 修复 1：确保背景和主题在最外层，哪怕内部崩溃也有兜底颜色
             val palette = rememberPalette()
-            var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
-
-            if (updateInfo != null) {
-                val ctx = LocalContext.current
-                AlertDialog(
-                    onDismissRequest = { updateInfo = null },
-                    title = { Text("发现新版本 v${updateInfo?.version} 🎉") },
-                    text = { Text(updateInfo?.changelog ?: "优化了下载体验。") },
-                    confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
-                    dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
-                )
-            }
-
             GradientBackground(palette) {
-                MaterialTheme(typography = SafeTypography) { MainScaffold() }
+                MaterialTheme(
+                    colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
+                    typography = SafeTypography
+                ) {
+                    var isLocked by remember { mutableStateOf(false) }
+                    
+                    LifecycleResumeEffect(Unit) {
+                        if (ThemeStore.getLockPassword(this@MainActivity) != null) {
+                            isLocked = true
+                        }
+                        onPauseOrDispose {}
+                    }
+
+                    // 修复 2：禁止使用 return@setContent，改用完整的 if-else 分支
+                    if (isLocked) {
+                        SecureLockScreen(onUnlock = { isLocked = false })
+                    } else {
+                        var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+                        LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+
+                        if (updateInfo != null) {
+                            val ctx = LocalContext.current
+                            AlertDialog(
+                                onDismissRequest = { updateInfo = null },
+                                title = { Text("发现新版本 v${updateInfo?.version} 🎉") },
+                                text = { Text(updateInfo?.changelog ?: "优化了下载体验。") },
+                                confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
+                                dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
+                            )
+                        }
+
+                        MainScaffold()
+                    }
+                }
             }
         }
     }
 }
 
-// 修复：恢复安全键盘
 @Composable
 fun SecureLockScreen(onUnlock: () -> Unit) {
     val ctx = LocalContext.current
@@ -95,7 +99,7 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
     val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
 
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().background(palette.background.first()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -201,7 +205,7 @@ fun MainScaffold() {
             }
         }
         
-        // 悬浮球
+        // 悬浮球（半透明）
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -212,7 +216,7 @@ fun MainScaffold() {
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                 .size(ballSize)
-                .alpha(if (showMenu) 1f else 0.7f)
+                .alpha(if (showMenu) 1f else 0.6f) // 大幅降低不透明度防遮挡
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { showMenu = false },
@@ -245,16 +249,14 @@ fun MainScaffold() {
     }
 }
 
-// 修复：恢复完整的 DownloadScreen 和任务状态
 @Composable
 fun DownloadScreen() {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    val tasks by DownloadManager.tasks.collectAsStateWithLifecycle() // 现在已导入
+    val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var prefillUrl by remember { mutableStateOf("") }
     var dirPath by remember { mutableStateOf(com.downloadsource.storage.DirStore.resolveDownloadDir(ctx).absolutePath) }
-    val scope = rememberCoroutineScope()
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {

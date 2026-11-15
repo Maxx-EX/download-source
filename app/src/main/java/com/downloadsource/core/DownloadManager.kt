@@ -82,6 +82,9 @@ object DownloadManager {
                 startTask(context, task.id)
             } catch (e: Exception) {
                 updateTaskState(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "任务添加失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
