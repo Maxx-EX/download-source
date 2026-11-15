@@ -28,6 +28,7 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
     val ctx = LocalContext.current
@@ -46,7 +47,6 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         }
     }
 
-    // 大功能：一键打包 ZIP
     val zipAndShare = {
         val targetFiles = if (isSelectionMode) selectedFiles.toList() else files
         if (targetFiles.isNotEmpty()) {
@@ -114,29 +114,44 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filteredFiles) { file ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface)
-                            .clickable {
-                                if (isSelectionMode) {
-                                    if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file)
-                                } else {
-                                    if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) onPlayVideo(file)
-                                }
-                            }.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // 使用了 SwipeToDismiss 侧滑删除
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = {
+                            if (it == SwipeToDismissBoxValue.EndToStart) {
+                                if (file.delete()) files = files - file
+                                true
+                            } else false
+                        }
+                    )
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        backgroundContent = {
+                            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Color.Red).padding(16.dp), contentAlignment = Alignment.CenterEnd) {
+                                Icon(Icons.Default.Delete, null, tint = Color.White)
+                            }
+                        }
                     ) {
-                        if (isSelectionMode) {
-                            Checkbox(checked = selectedFiles.contains(file), onCheckedChange = { 
-                                if (it) selectedFiles.add(file) else selectedFiles.remove(file) 
-                            })
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text(file.name, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${file.length() / 1024 / 1024} MB", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (!isSelectionMode) {
-                            IconButton(onClick = { if (file.delete()) files = files - file }) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface)
+                                .clickable {
+                                    if (isSelectionMode) {
+                                        if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file)
+                                    } else {
+                                        if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) onPlayVideo(file)
+                                    }
+                                }.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isSelectionMode) {
+                                Checkbox(checked = selectedFiles.contains(file), onCheckedChange = { 
+                                    if (it) selectedFiles.add(file) else selectedFiles.remove(file) 
+                                })
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(file.name, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${file.length() / 1024 / 1024} MB", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }

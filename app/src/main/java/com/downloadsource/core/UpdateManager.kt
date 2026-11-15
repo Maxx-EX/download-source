@@ -31,6 +31,9 @@ object UpdateManager {
                 val isZetaChannel = BuildConfig.CHANNEL == "zeta"
                 val targetName = if (isZetaChannel) "Zeta" else "Omega"
 
+                var bestRelease: ReleaseInfo? = null
+                var maxVersion = currentVersionName
+
                 for (element in jsonArray) {
                     val json = element.asJsonObject
                     if (json.get("draft")?.asBoolean == true || json.get("prerelease")?.asBoolean == true) continue
@@ -39,29 +42,27 @@ object UpdateManager {
                     val body = json.get("body")?.asString ?: "暂无更新日志"
                     val assets = json.getAsJsonArray("assets")
                     
-                    // 剥离前缀 v，并截取真实版本名 (例如 4.7.0)
                     val rawTag = tag.removePrefix("v")
-                    // 兼容以前带 -build 的老格式
                     val remoteVersionName = rawTag.substringBefore("-build").substringBefore("-zeta").substringBefore("-omega")
 
-                    // 查找对应通道的包 (包名必须包含 Zeta 或 Omega)
                     val apkUrl = assets.firstOrNull { 
                         val name = it.asJsonObject.get("name").asString
                         name.contains(targetName, true) && name.endsWith(".apk") 
                     }?.asJsonObject?.get("browser_download_url")?.asString
 
-                    if (!apkUrl.isNullOrBlank() && isVersionNewer(remoteVersionName, currentVersionName)) {
-                        return@withContext ReleaseInfo(remoteVersionName, apkUrl, body, isZetaChannel)
+                    // 核心逻辑：只要比当前记录的 maxVersion 更大，就更新它
+                    if (!apkUrl.isNullOrBlank() && isVersionNewer(remoteVersionName, maxVersion)) {
+                        maxVersion = remoteVersionName
+                        bestRelease = ReleaseInfo(remoteVersionName, apkUrl, body, isZetaChannel)
                     }
                 }
-                null
+                return@withContext bestRelease
             }
         } catch (e: Exception) { 
             null 
         }
     }
 
-    // 语义化版本比对：4.7.0 vs 4.6.0
     private fun isVersionNewer(remote: String, local: String): Boolean {
         return try {
             val r = remote.split(".").map { it.toIntOrNull() ?: 0 }

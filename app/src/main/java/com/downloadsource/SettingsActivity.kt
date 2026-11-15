@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.downloadsource.core.DownloadManager
+import com.downloadsource.core.LocalWebServer
 import com.downloadsource.core.UpdateManager
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
@@ -55,11 +56,11 @@ fun SettingsScreen(onClose: () -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     var themeStyle by remember { mutableIntStateOf(ThemeStore.getThemeStyle(ctx)) }
-    var glassType by remember { mutableIntStateOf(ThemeStore.getGlassType(ctx)) }
     var engine by remember { mutableStateOf(BrowserPrefs.getEngine(ctx)) }
     var showDonate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
+    var serverIp by remember { mutableStateOf("未启动") }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -71,8 +72,6 @@ fun SettingsScreen(onClose: () -> Unit) {
             
             SettingsGroup {
                 SettingsRow("版本通道", BuildConfig.CHANNEL.uppercase())
-                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
-                SettingsRow("当前版本", "v${BuildConfig.VERSION_NAME}")
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 SettingsRow("检查更新", if (checking) "检测中..." else "检查最新版", Icons.Default.Update) {
                     if (!checking) {
@@ -86,19 +85,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
-            // 10 大新功能之一：多主题材质 (液态/毛玻璃/纯色)
             SettingsGroup {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("UI 材质", color = palette.onSurface, modifier = Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("纯色", "毛玻璃", "液态玻璃").forEachIndexed { index, name ->
-                        Box(Modifier.clip(RoundedCornerShape(50)).background(if (glassType == index) palette.primary.first() else palette.onSurface.copy(alpha = 0.1f)).clickable { glassType = index; ThemeStore.setGlassType(ctx, index) }.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                            Text(name, color = if (glassType == index) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("主题风格", color = palette.onSurface, modifier = Modifier.weight(1f))
                 }
@@ -124,8 +111,19 @@ fun SettingsScreen(onClose: () -> Unit) {
             }
 
             SettingsGroup {
-                // 10 大新功能之二：手动勾选镜像源 (不再让用户打字)
-                SettingsRow("手动选择镜像源", "GitHub 加速", Icons.Default.Link) { ctx.startActivity(Intent(ctx, SourceManageActivity::class.java)) }
+                SettingsRow("局域网互传", if (LocalWebServer.isRunning) "已开启" else "关闭中", Icons.Default.Wifi) {
+                    if (LocalWebServer.isRunning) {
+                        LocalWebServer.stop()
+                        serverIp = "未启动"
+                        Toast.makeText(ctx, "服务器已关闭", Toast.LENGTH_SHORT).show()
+                    } else {
+                        serverIp = LocalWebServer.start(ctx)
+                        Toast.makeText(ctx, "请在电脑浏览器访问: $serverIp", Toast.LENGTH_LONG).show()
+                    }
+                }
+                if (LocalWebServer.isRunning) {
+                    Text("电脑浏览器访问: http://$serverIp", color = palette.primary.first(), modifier = Modifier.padding(start = 16.dp, bottom = 12.dp), fontWeight = FontWeight.Bold)
+                }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f), modifier = Modifier.padding(start = 16.dp))
                 SettingsRow("清理下载缓存", "清理临时分片", Icons.Default.DeleteSweep) {
                     val dir = DirStore.resolveDownloadDir(ctx)

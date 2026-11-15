@@ -5,76 +5,68 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
 class WebInterceptor {
-    data class InterceptedData(val url: String, val fileName: String?, val mimeType: String?)
+    data class SniffedMedia(val url: String, val mime: String?, val isBlob: Boolean)
 
-    // 用 SharedFlow 将 JS 拦截到的数据传给 Compose UI
-    private val _intercepted = MutableSharedFlow<InterceptedData>()
-    val intercepted: SharedFlow<InterceptedData> = _intercepted
+    private val _sniffedData = MutableSharedFlow<SniffedMedia>()
+    val sniffedData: SharedFlow<SniffedMedia> = _sniffedData
 
     @JavascriptInterface
-    fun onDownloadTriggered(url: String, fileName: String?, mime: String?) {
-        // 过滤掉空数据和无效的 javascript
-        if (url.isBlank() || url.startsWith("javascript:")) return
-        _intercepted.tryEmit(InterceptedData(url, fileName, mime))
+    fun onMediaFound(url: String, mime: String?) {
+        if (url.isBlank()) return
+        // 过滤掉无关的 icon
+        if (url.contains("favicon") || url.contains(".svg") || url.contains(".gif")) return
+        _sniffedData.tryEmit(SniffedMedia(url, mime, url.startsWith("blob:")))
     }
 
     @JavascriptInterface
-    fun onBlobData(base64Data: String, fileName: String?, mime: String?) {
+    fun onBlobFound(base64Data: String, mime: String) {
         if (base64Data.isBlank()) return
-        // 将 Base64 包装成 DataURL 交给后续的下载器处理
-        val url = "data:${mime ?: "application/octet-stream"};base64,$base64Data"
-        _intercepted.tryEmit(InterceptedData(url, fileName ?: "blob_${System.currentTimeMillis()}", mime))
+        val url = "data:$mime;base64,$base64Data"
+        _sniffedData.tryEmit(SniffedMedia(url, mime, true))
     }
 
-    // 注入的终极拦截脚本
+    // 注入的终极极限嗅探脚本
     val injectionScript = """
         (function() {
-            // 1. 拦截 a 标签的点击 (覆盖动态生成的 a 标签)
-            var originalClick = HTMLAnchorElement.prototype.click;
-            HTMLAnchorElement.prototype.click = function() {
-                if (this.href && (this.href.startsWith('blob:') || this.href.startsWith('data:') || this.download)) {
-                    if (this.href.startsWith('blob:')) {
-                        fetch(this.href).then(r => r.blob()).then(b => {
-                            var reader = new FileReader();
-                            reader.onload = function() {
-                                window.AndroidBridge.onBlobData(reader.result.split(',')[1], this.download, b.type);
-                            };
-                            reader.readAsDataURL(b);
-                        }).catch(e => window.AndroidBridge.onDownloadTriggered(this.href, this.download, ''));
-                    } else {
-                        window.AndroidBridge.onDownloadTriggered(this.href, this.download, '');
-                    }
-                    return; 
-                }
-                originalClick.apply(this, arguments);
-            };
-
-            // 2. 拦截 window.open
-            var originalOpen = window.open;
-            window.open = function(url, name, features) {
-                if (url && (url.startsWith('http') || url.startsWith('blob:'))) {
-                    window.AndroidBridge.onDownloadTriggered(url, null, null);
-                }
-                return originalOpen.apply(this, arguments);
-            };
-            
-            // 3. 拦截 fetch 的 blob 请求
+            // 1. 劫持 fetch
             var originalFetch = window.fetch;
             window.fetch = function() {
-                return originalFetch.apply(this, arguments).then(response => {
-                    var contentType = response.headers.get("content-type");
-                    if (contentType && (contentType.includes("application/octet-stream") || contentType.includes("application/vnd"))) {
-                        response.clone().blob().then(blob => {
-                            var reader = new FileReader();
-                            reader.onload = function() {
-                                window.AndroidBridge.onBlobData(reader.result.split(',')[1], null, contentType);
-                            };
-                            reader.readAsDataURL(blob);
-                        });
-                    }
-                    return response;
-                });
+                var url = arguments[0];
+                if (typeof url === 'string' && (url.includes('.mp4') || url.includes('.m3u8') || url.includes('.mp3') || url.includes('stream'))) {
+                    window.AndroidBridge.onMediaFound(url, null);
+                }
+                return originalFetch.apply(this, arguments);
             };
+
+            // 2. 劫持 XHR
+            var originalXHR = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url) {
+                if (typeof url === 'string' && (url.includes('.mp4') || url.includes('.m3u8') || url.includes('.mp3') || url.includes('stream'))) {
+                    window.AndroidBridge.onMediaFound(url, null);
+                }
+                return originalXHR.apply(this, arguments);
+            };
+
+            // 3. 动态扫描 DOM (包含动态加载的 video/audio)
+            setInterval(function() {
+                var mediaTags = document.querySelectorAll('video, audio, source');
+                for (var i = 0; i < mediaTags.length; i++) {
+                    var src = mediaTags[i].src || mediaTags[i].currentSrc;
+                    if (src) {
+                        if (src.startsWith('blob:')) {
+                            fetch(src).then(r => r.blob()).then(b => {
+                                var reader = new FileReader();
+                                reader.onload = function() {
+                                    window.AndroidBridge.onBlobFound(reader.result.split(',')[1], b.type);
+                                };
+                                reader.readAsDataURL(b);
+                            }).catch(e => {});
+                        } else {
+                            window.AndroidBridge.onMediaFound(src, null);
+                        }
+                    }
+                }
+            }, 2000);
         })();
     """.trimIndent()
 }

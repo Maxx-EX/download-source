@@ -183,7 +183,8 @@ fun MainScaffold(
                 .background(if (isHoveringBottomBar) LocalPalette.current.primary.first() else LocalPalette.current.primary.first().copy(alpha = 0.85f))
                 .combinedClickable(
                     onClick = { showMenu = !showMenu },
-                    onLongClick = { showMenu = true }
+                    onLongClick = { showMenu = true },
+                    onDoubleClick = { offsetX = -1000f; offsetY = -1000f }
                 ),
             contentAlignment = Alignment.Center
         ) {

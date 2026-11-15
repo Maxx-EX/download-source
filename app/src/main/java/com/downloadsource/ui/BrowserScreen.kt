@@ -3,13 +3,10 @@ package com.downloadsource.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -42,6 +39,8 @@ import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
+import com.downloadsource.web.WebInterceptor
+import kotlinx.coroutines.launch
 import java.io.File
 import java.net.URLEncoder
 
@@ -58,23 +57,37 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
+    val scope = rememberCoroutineScope()
     
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
-    var sniffedUrls = remember { mutableStateListOf<String>() }
-    var extractedLinks = remember { mutableStateListOf<String>() } // 提取的普通链接
+    
+    // 嗅探列表
+    val sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
     
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
     var pendingFileName by remember { mutableStateOf<String?>(null) }
+    
     var showSniffList by remember { mutableStateOf(false) }
-    var showLinksList by remember { mutableStateOf(false) }
     var showHistoryList by remember { mutableStateOf(false) }
     var showMenuSheet by remember { mutableStateOf(false) }
 
+    val webInterceptor = remember { WebInterceptor() }
+
+    // 监听外部触发
     LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
     LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
+
+    // 监听 JS 嗅探结果
+    LaunchedEffect(Unit) {
+        webInterceptor.sniffedData.collect { data ->
+            if (sniffedUrls.none { it.url == data.url } && sniffedUrls.size < 100) {
+                sniffedUrls.add(data)
+            }
+        }
+    }
 
     val doSearch = {
         val q = urlInput.trim()
@@ -129,6 +142,9 @@ fun BrowserScreen(
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         
+                        // 注入 JS 桥接
+                        addJavascriptInterface(webInterceptor, "AndroidBridge")
+                        
                         webViewClient = object : SafeWebViewClient(
                             onDownloadRequest = { url -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
@@ -138,7 +154,9 @@ fun BrowserScreen(
                                 if (url.contains("captcha") || url.contains("verify")) return null
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
-                                    if (!sniffedUrls.contains(url) && sniffedUrls.size < 50) sniffedUrls.add(url)
+                                    if (sniffedUrls.none { it.url == url } && sniffedUrls.size < 100) {
+                                        sniffedUrls.add(WebInterceptor.SniffedMedia(url, null, false))
+                                    }
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
@@ -146,29 +164,10 @@ fun BrowserScreen(
                                 super.onPageStarted(view, url, favicon)
                                 if (url != null) { urlInput = url; currentUrl = url; BrowserHistoryStore.saveSession(ctx, url) }
                             }
-                            
-                            // 提取普通网页链接
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                view?.evaluateJavascript("""
-                                    (function(){
-                                        var links = document.querySelectorAll('a');
-                                        var arr = [];
-                                        for(var i=0; i<links.length; i++){
-                                            var h = links[i].href;
-                                            if(h && h.startsWith('http') && !h.includes('javascript')){
-                                                arr.push(h);
-                                            }
-                                        }
-                                        return arr.join(',');
-                                    })();
-                                """.trimIndent()) { result ->
-                                    if (!result.isNullOrBlank() && result != "null") {
-                                        val cleanResult = result.replace("\"", "")
-                                        extractedLinks.clear()
-                                        extractedLinks.addAll(cleanResult.split(",").distinct().take(50))
-                                    }
-                                }
+                                // 注入终极脚本
+                                view?.evaluateJavascript(webInterceptor.injectionScript, null)
                             }
                         }
                         setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true }
@@ -183,52 +182,43 @@ fun BrowserScreen(
         // 嗅探悬浮球
         AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
             FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first()) {
-                Icon(Icons.Default.Layers, null, tint = Color.White)
+                BadgedBox(badge = { Badge { Text(sniffedUrls.size.toString()) } }) {
+                    Icon(Icons.Default.Layers, null, tint = Color.White)
+                }
             }
         }
     }
 
-    // 菜单面板
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
-                BrowserMenuItem("提取页面所有链接", Icons.Default.Link, palette.onSurface) { 
-                    showLinksList = true; showMenuSheet = false 
-                }
-                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { 
-                    showHistoryList = true; showMenuSheet = false 
+                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
+                BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) { 
+                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, currentUrl) }, "分享网页")); showMenuSheet = false 
                 }
                 Spacer(Modifier.height(16.dp))
             }
         }
     }
 
-    // 链接提取面板
-    if (showLinksList) {
-        Dialog(onDismissRequest = { showLinksList = false }) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
-                Text("页面链接提取 (${extractedLinks.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                LazyColumn {
-                    items(extractedLinks) { url ->
-                        Row(Modifier.fillMaxWidth().clickable { 
-                            pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true; showLinksList = false 
-                        }.padding(12.dp)) {
-                            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
-                Text("已抓取媒体 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("极限嗅探结果 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = palette.onSurface)
+                    TextButton(onClick = { sniffedUrls.clear(); showSniffList = false }) { Text("清空") }
+                }
                 LazyColumn {
-                    items(sniffedUrls) { url ->
-                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
-                            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
+                    items(sniffedUrls) { media ->
+                        Row(Modifier.fillMaxWidth().clickable { 
+                            pendingDownloadUrl = media.url; pendingFileName = null; showDownloadDialog = true; showSniffList = false 
+                        }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (media.isBlob) Icons.Default.BubbleChart else Icons.Default.PlayCircle,
+                                null, tint = palette.primary.first()
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(if (media.isBlob) "加密/动态流 (Blob)" else media.url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
                         }
                     }
                 }
