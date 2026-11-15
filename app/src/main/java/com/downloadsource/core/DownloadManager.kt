@@ -109,8 +109,14 @@ object DownloadManager {
                     installApk(context, out)
                 } else {
                     MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
-                val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE)) else @Suppress("DEPRECATION") vibrator.vibrate(200)
+                try {
+                    val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                    } else {
+                        @Suppress("DEPRECATION") vibrator.vibrate(200)
+                    }
+                } catch (e: Exception) { /* 忽略没有震动权限的情况 */ }
                 }
                 checkPending(context)
             } catch (e: CancellationException) {

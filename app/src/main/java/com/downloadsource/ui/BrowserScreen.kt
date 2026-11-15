@@ -6,7 +6,9 @@ import android.content.Intent
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -57,35 +59,31 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    val scope = rememberCoroutineScope()
     
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
+    var sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
     
-    // 嗅探列表
-    val sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
-    
+    // 大功能：全屏与夜间模式
+    var isFullScreen by remember { mutableStateOf(false) }
+    var isNightMode by remember { mutableStateOf(false) }
+
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
     var pendingFileName by remember { mutableStateOf<String?>(null) }
-    
     var showSniffList by remember { mutableStateOf(false) }
     var showHistoryList by remember { mutableStateOf(false) }
     var showMenuSheet by remember { mutableStateOf(false) }
 
     val webInterceptor = remember { WebInterceptor() }
 
-    // 监听外部触发
     LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
     LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
 
-    // 监听 JS 嗅探结果
     LaunchedEffect(Unit) {
         webInterceptor.sniffedData.collect { data ->
-            if (sniffedUrls.none { it.url == data.url } && sniffedUrls.size < 100) {
-                sniffedUrls.add(data)
-            }
+            if (sniffedUrls.none { it.url == data.url } && sniffedUrls.size < 100) sniffedUrls.add(data)
         }
     }
 
@@ -112,25 +110,26 @@ fun BrowserScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { 
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) 
+            if (!isFullScreen) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { 
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) 
+                    }
+                    IconButton(onClick = { webView?.goForward() }, enabled = webView?.canGoForward() == true) { 
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) 
+                    }
+                    Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        BasicTextField(
+                            value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
+                            cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
+                            decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
+                    IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
                 }
-                IconButton(onClick = { webView?.goForward() }, enabled = webView?.canGoForward() == true) { 
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) 
-                }
-                
-                Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    BasicTextField(
-                        value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
-                        cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                        decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
-                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
             }
 
             AndroidView(
@@ -139,10 +138,11 @@ fun BrowserScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
+                        // 修复部分网站打不开：允许混合内容，伪装 UA
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         
-                        // 注入 JS 桥接
                         addJavascriptInterface(webInterceptor, "AndroidBridge")
                         
                         webViewClient = object : SafeWebViewClient(
@@ -166,8 +166,8 @@ fun BrowserScreen(
                             }
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                // 注入终极脚本
                                 view?.evaluateJavascript(webInterceptor.injectionScript, null)
+                                if (isNightMode) injectNightMode(view)
                             }
                         }
                         setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true }
@@ -179,7 +179,6 @@ fun BrowserScreen(
             )
         }
 
-        // 嗅探悬浮球
         AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
             FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first()) {
                 BadgedBox(badge = { Badge { Text(sniffedUrls.size.toString()) } }) {
@@ -192,10 +191,15 @@ fun BrowserScreen(
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
-                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
-                BrowserMenuItem("分享当前网页", Icons.Default.Share, palette.onSurface) { 
-                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, currentUrl) }, "分享网页")); showMenuSheet = false 
+                BrowserMenuItem(if (isFullScreen) "退出全屏沉浸" else "全屏沉浸模式", Icons.Default.Fullscreen, palette.onSurface) { 
+                    isFullScreen = !isFullScreen; showMenuSheet = false 
                 }
+                BrowserMenuItem(if (isNightMode) "关闭网页夜间" else "强制网页夜间", Icons.Default.DarkMode, palette.onSurface) { 
+                    isNightMode = !isNightMode
+                    if (isNightMode) injectNightMode(webView) else webView?.reload()
+                    showMenuSheet = false 
+                }
+                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
                 Spacer(Modifier.height(16.dp))
             }
         }
@@ -213,10 +217,7 @@ fun BrowserScreen(
                         Row(Modifier.fillMaxWidth().clickable { 
                             pendingDownloadUrl = media.url; pendingFileName = null; showDownloadDialog = true; showSniffList = false 
                         }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (media.isBlob) Icons.Default.BubbleChart else Icons.Default.PlayCircle,
-                                null, tint = palette.primary.first()
-                            )
+                            Icon(if (media.isBlob) Icons.Default.BubbleChart else Icons.Default.PlayCircle, null, tint = palette.primary.first())
                             Spacer(Modifier.width(12.dp))
                             Text(if (media.isBlob) "加密/动态流 (Blob)" else media.url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
                         }
@@ -251,6 +252,18 @@ fun BrowserScreen(
             showDownloadDialog = false
         }
     }
+}
+
+// 强制注入夜间 CSS
+fun injectNightMode(webView: WebView?) {
+    val css = """
+        javascript:(function() {
+            var style = document.createElement('style');
+            style.innerHTML = 'html { filter: invert(1) hue-rotate(180deg); background: #111 !important; } img, video { filter: invert(1) hue-rotate(180deg); }';
+            document.head.appendChild(style);
+        })();
+    """.trimIndent()
+    webView?.evaluateJavascript(css, null)
 }
 
 @Composable
