@@ -19,6 +19,9 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+// 核心结构：将每个分片与其专属的密钥和 IV 绑定
+data class TsSegment(val url: String, val key: ByteArray?, val iv: ByteArray?)
+
 class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()) {
     private val activeCalls = ConcurrentHashMap<String, MutableList<okhttp3.Call>>()
 
@@ -134,16 +137,17 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         var finalUrl = url
         if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
         
-        val (tsUrls, aesKey, iv) = extractTsUrlsAndKeys(finalUrl, mutableSetOf(), null, null)
-        if (tsUrls.isEmpty()) error("未找到有效的 TS 分片")
+        // 解析出所有分片，每个分片携带自己的解密参数
+        val segments = parseM3u8(finalUrl, mutableSetOf())
+        if (segments.isEmpty()) error("未找到有效的 TS 分片")
         
         val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
-        val total = tsUrls.size.toLong()
+        val total = segments.size.toLong()
         val ticker = launch(Dispatchers.Default) { while (isActive) { delay(300); onTick(downloaded.get(), total, 0) } }
 
         val semaphore = Semaphore(parts)
-        tsUrls.mapIndexed { index, tsUrl ->
+        segments.mapIndexed { index, segment ->
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val partFile = File(tmpDir, "$index.ts")
@@ -152,17 +156,13 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                         while (r > 0) {
                             if (!isActive) return@withPermit
                             try {
-                                val call = client.newCall(Request.Builder().url(tsUrl).headers(headers).build())
+                                val call = client.newCall(Request.Builder().url(segment.url).headers(headers).build())
                                 activeCalls.getOrPut(taskId) { mutableListOf() }.add(call)
                                 call.execute().use { resp -> 
                                     var bytes = resp.body?.bytes() ?: ByteArray(0)
-                                    if (aesKey != null) {
-                                        val useIv = iv ?: ByteArray(16).apply {
-                                            val seq = index
-                                            this[12] = (seq shr 24).toByte(); this[13] = (seq shr 16).toByte()
-                                            this[14] = (seq shr 8).toByte(); this[15] = seq.toByte()
-                                        }
-                                        bytes = decryptAES(bytes, aesKey, useIv)
+                                    // 使用专属的 key 和 iv 进行解密
+                                    if (segment.key != null && segment.iv != null) {
+                                        bytes = decryptAES(bytes, segment.key, segment.iv)
                                     }
                                     partFile.writeBytes(bytes)
                                     java.io.FileOutputStream(partFile, true).use { it.fd.sync() }
@@ -183,7 +183,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         ticker.cancel()
 
         val mergedTs = File(targetDir, "$fileName.tmp_merged.ts")
-        if (!ZeroCore.mergeFiles(tsUrls.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
+        if (!ZeroCore.mergeFiles(segments.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
 
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         val success = withContext(Dispatchers.IO) { 
@@ -203,51 +203,74 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         outMp4
     }
 
-    private suspend fun extractTsUrlsAndKeys(url: String, visited: MutableSet<String>, currentKey: ByteArray?, currentIv: ByteArray?): Triple<List<String>, ByteArray?, ByteArray?> = withContext(Dispatchers.IO) {
-        if (visited.contains(url)) return@withContext Triple(emptyList(), currentKey, currentIv)
+    // 终极 M3U8 解析器
+    private suspend fun parseM3u8(url: String, visited: MutableSet<String>): List<TsSegment> = withContext(Dispatchers.IO) {
+        if (visited.contains(url)) return@withContext emptyList()
         visited.add(url)
+
         val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
-        
-        var aesKey = currentKey
-        var iv = currentIv
         val lines = text.lines()
-        
-        // 修复：检测是否为 Master Playlist（多码率列表）
-        val isMaster = lines.any { it.startsWith("#EXT-X-STREAM-INF") }
-        if (isMaster) {
-            // 自动选择第一个子列表（通常是最高清晰度）
+
+        // 处理 Master Playlist (多码率)
+        if (lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
             val subUrl = lines.firstOrNull { it.isNotBlank() && !it.startsWith("#") }
             if (subUrl != null) {
-                val absUrl = if (subUrl.startsWith("http")) subUrl else url.substringBeforeLast('/') + "/" + subUrl
-                return@withContext extractTsUrlsAndKeys(absUrl, visited, currentKey, currentIv)
+                return@withContext parseM3u8(resolveUrl(url, subUrl), visited)
             }
         }
-        
-        lines.find { it.startsWith("#EXT-X-KEY:") }?.let { keyLine ->
-            if (keyLine.contains("METHOD=AES-128")) {
-                val keyUri = Regex("URI=\"(.*?)\"").find(keyLine)?.groupValues?.get(1)
-                val ivStr = Regex("IV=0x(.*?)(,|$)").find(keyLine)?.groupValues?.get(1)
-                if (keyUri != null) {
-                    aesKey = client.newCall(Request.Builder().url(if (keyUri.startsWith("http")) keyUri else url.substringBeforeLast('/') + "/" + keyUri).build()).execute().use { it.body?.bytes() }
-                    if (ivStr != null) iv = hexStringToByteArray(ivStr)
-                }
-            }
-        }
-        
-        val urls = mutableListOf<String>()
+
+        var currentKey: ByteArray? = null
+        var currentIv: ByteArray? = null
+        var mediaSequence = 0L
+        var segmentIndex = 0L
+        val result = mutableListOf<TsSegment>()
+
         for (line in lines) {
-            if (line.isNotBlank() && !line.startsWith("#")) {
-                val absUrl = if (line.startsWith("http")) line else url.substringBeforeLast('/') + "/" + line
-                if (absUrl.contains(".m3u8")) {
-                    val (subUrls, subKey, subIv) = extractTsUrlsAndKeys(absUrl, visited, aesKey, iv)
-                    urls.addAll(subUrls)
-                    aesKey = subKey; iv = subIv
-                } else {
-                    urls.add(absUrl)
+            val trimmed = line.trim()
+            if (trimmed.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+                mediaSequence = trimmed.substringAfter(":").toLongOrNull() ?: 0L
+            } else if (trimmed.startsWith("#EXT-X-KEY:")) {
+                val method = Regex("METHOD=([^,]+)").find(trimmed)?.groupValues?.get(1) ?: "NONE"
+                if (method == "AES-128") {
+                    val keyUri = Regex("URI=\"(.*?)\"").find(trimmed)?.groupValues?.get(1)
+                    val ivStr = Regex("IV=0x(.*?)(,|$)").find(trimmed)?.groupValues?.get(1)
+                    if (keyUri != null) {
+                        val absKeyUri = resolveUrl(url, keyUri)
+                        currentKey = client.newCall(Request.Builder().url(absKeyUri).build()).execute().use { it.body?.bytes() }
+                        currentIv = if (ivStr != null) hexStringToByteArray(ivStr) else null
+                    } else {
+                        currentKey = null; currentIv = null
+                    }
+                } else if (method == "NONE") {
+                    currentKey = null; currentIv = null
                 }
+            } else if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
+                val absUrl = resolveUrl(url, trimmed)
+                if (absUrl.contains(".m3u8", ignoreCase = true)) {
+                    result.addAll(parseM3u8(absUrl, visited))
+                } else {
+                    // 如果没写 IV，标准默认使用 (Media Sequence + Index) 作为 IV
+                    val ivToUse = currentIv ?: if (currentKey != null) {
+                        val seq = mediaSequence + segmentIndex
+                        ByteArray(16).apply {
+                            this[8] = (seq shr 56).toByte(); this[9] = (seq shr 48).toByte(); this[10] = (seq shr 40).toByte(); this[11] = (seq shr 32).toByte()
+                            this[12] = (seq shr 24).toByte(); this[13] = (seq shr 16).toByte(); this[14] = (seq shr 8).toByte(); this[15] = seq.toByte()
+                        }
+                    } else null
+                    
+                    result.add(TsSegment(absUrl, currentKey, ivToUse))
+                }
+                segmentIndex++
             }
         }
-        return@withContext Triple(urls, aesKey, iv)
+        return@withContext result
+    }
+
+    // 彻底修复相对路径拼接（支持 ../ 等）
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
+        if (relativeUrl.startsWith("http")) return relativeUrl
+        val baseUri = java.net.URI(baseUrl)
+        return baseUri.resolve(relativeUrl).toString()
     }
 
     private fun hexStringToByteArray(s: String): ByteArray {
