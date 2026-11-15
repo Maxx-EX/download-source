@@ -54,86 +54,104 @@ fun DownloadCard(
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf(task.fileName) }
 
-    // 小功能：下载速度平滑动画
     val animatedSpeed by animateFloatAsState(targetValue = task.speed.toFloat(), animationSpec = tween(500), label = "speed")
 
-    Box {
-        Row(
-            modifier.fillMaxWidth()
-                .shadow(4.dp, RoundedCornerShape(16.dp), ambientColor = palette.primary.first().copy(alpha = 0.1f))
-                .clip(RoundedCornerShape(16.dp))
-                .background(palette.surface)
-                .combinedClickable(
-                    onClick = { if (task.status == TaskStatus.Completed) onOpen() },
-                    onLongClick = { showSheet = true }
-                )
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ProgressRing(task.fraction, task.status == TaskStatus.Running, task.status == TaskStatus.Completed, palette.primary)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
-                val speedStr = if (animatedSpeed > 0) String.format("%.1f KB/s", animatedSpeed / 1024) else ""
-                Text(
-                    when (task.status) {
-                        TaskStatus.Failed -> "失败：${task.error ?: ""}"
-                        TaskStatus.Completed -> "已完成 (点击打开)"
-                        TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
-                        else -> "${task.sizeText} · ${task.threads}线程 ${if (speedStr.isNotEmpty()) "· $speedStr" else ""}"
-                    },
-                    color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (task.status != TaskStatus.Completed) {
-                IconButton(onClick = { if (task.status == TaskStatus.Running) onPause() else onResume() }) {
-                    Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onSurface)
-                }
-            }
-            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
+    // 新增：侧滑删除
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = {
+            if (it == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else false
         }
+    )
 
-        if (showSheet) {
-            ModalBottomSheet(onDismissRequest = { showSheet = false }, containerColor = palette.surface) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("任务操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface, modifier = Modifier.padding(bottom = 12.dp))
-                    SheetItem("其它应用打开", Icons.Default.OpenInNew, palette.onSurface) {
-                        val file = File(task.outputPath ?: "")
-                        if (file.exists()) {
-                            val uri = try { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file) } catch (e: Exception) { Toast.makeText(ctx, "文件路径异常，无法打开", Toast.LENGTH_SHORT).show(); return@SheetItem }
-                            val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
-                            try { ctx.startActivity(Intent.createChooser(intent, "打开文件")) } catch (_: Exception) { }
-                        } else Toast.makeText(ctx, "文件不存在", Toast.LENGTH_SHORT).show()
-                        showSheet = false
-                    }
-                    SheetItem("重命名", Icons.Default.Edit, palette.onSurface) { renameText = task.fileName; showRenameDialog = true; showSheet = false }
-                    if (task.status == TaskStatus.Completed || task.status == TaskStatus.Failed) {
-                        SheetItem("重新下载", Icons.Default.Refresh, palette.onSurface) { File(task.outputPath ?: "").delete(); DownloadManager.start(ctx, task.id); showSheet = false }
-                    }
-                    SheetItem("复制下载链接", Icons.Default.ContentCopy, palette.onSurface) {
-                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("URL", task.url))
-                        Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show(); showSheet = false
-                    }
-                    SheetItem("分享", Icons.Default.Share, palette.onSurface) {
-                        val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, task.url) }
-                        ctx.startActivity(Intent.createChooser(intent, "分享链接")); showSheet = false
-                    }
-                    SheetItem("删除", Icons.Default.Delete, Color.Red) { onDelete(); showSheet = false }
-                    Spacer(Modifier.height(16.dp))
-                }
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Color.Red).padding(16.dp), contentAlignment = Alignment.CenterEnd) {
+                Icon(Icons.Default.Delete, null, tint = Color.White)
             }
         }
+    ) {
+        Box {
+            Row(
+                modifier.fillMaxWidth()
+                    .shadow(4.dp, RoundedCornerShape(16.dp), ambientColor = palette.primary.first().copy(alpha = 0.1f))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(palette.surface)
+                    .combinedClickable(
+                        onClick = { if (task.status == TaskStatus.Completed) onOpen() },
+                        onLongClick = { showSheet = true }
+                    )
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ProgressRing(task.fraction, task.status == TaskStatus.Running, task.status == TaskStatus.Completed, palette.primary)
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(4.dp))
+                    val speedStr = if (animatedSpeed > 0) String.format("%.1f KB/s", animatedSpeed / 1024) else ""
+                    Text(
+                        when (task.status) {
+                            TaskStatus.Failed -> "失败：${task.error ?: ""}"
+                            TaskStatus.Completed -> "已完成 (点击打开)"
+                            TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
+                            else -> "${task.sizeText} · ${task.threads}线程 ${if (speedStr.isNotEmpty()) "· $speedStr" else ""}"
+                        },
+                        color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (task.status != TaskStatus.Completed) {
+                    IconButton(onClick = { if (task.status == TaskStatus.Running) onPause() else onResume() }) {
+                        Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onSurface)
+                    }
+                }
+            }
 
-        if (showRenameDialog) {
-            AlertDialog(
-                onDismissRequest = { showRenameDialog = false },
-                title = { Text("重命名") },
-                text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true) },
-                confirmButton = { TextButton(onClick = { if (renameText.isNotBlank()) DownloadManager.rename(ctx, task.id, renameText); showRenameDialog = false }) { Text("确定") } },
-                dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("取消") } }
-            )
+            if (showSheet) {
+                ModalBottomSheet(onDismissRequest = { showSheet = false }, containerColor = palette.surface) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("任务操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = palette.onSurface, modifier = Modifier.padding(bottom = 12.dp))
+                        SheetItem("其它应用打开", Icons.Default.OpenInNew, palette.onSurface) {
+                            val file = File(task.outputPath ?: "")
+                            if (file.exists()) {
+                                val uri = try { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file) } catch (e: Exception) { Toast.makeText(ctx, "文件路径异常", Toast.LENGTH_SHORT).show(); return@SheetItem }
+                                val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                try { ctx.startActivity(Intent.createChooser(intent, "打开文件")) } catch (_: Exception) { }
+                            } else Toast.makeText(ctx, "文件不存在", Toast.LENGTH_SHORT).show()
+                            showSheet = false
+                        }
+                        SheetItem("重命名", Icons.Default.Edit, palette.onSurface) { renameText = task.fileName; showRenameDialog = true; showSheet = false }
+                        if (task.status == TaskStatus.Completed || task.status == TaskStatus.Failed) {
+                            SheetItem("重新下载", Icons.Default.Refresh, palette.onSurface) { File(task.outputPath ?: "").delete(); DownloadManager.start(ctx, task.id); showSheet = false }
+                        }
+                        SheetItem("复制下载链接", Icons.Default.ContentCopy, palette.onSurface) {
+                            val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("URL", task.url))
+                            Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show(); showSheet = false
+                        }
+                        SheetItem("分享", Icons.Default.Share, palette.onSurface) {
+                            val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, task.url) }
+                            ctx.startActivity(Intent.createChooser(intent, "分享链接")); showSheet = false
+                        }
+                        SheetItem("删除", Icons.Default.Delete, Color.Red) { onDelete(); showSheet = false }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+
+            if (showRenameDialog) {
+                AlertDialog(
+                    onDismissRequest = { showRenameDialog = false },
+                    title = { Text("重命名") },
+                    text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true) },
+                    confirmButton = { TextButton(onClick = { if (renameText.isNotBlank()) DownloadManager.rename(ctx, task.id, renameText); showRenameDialog = false }) { Text("确定") } },
+                    dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("取消") } }
+                )
+            }
         }
     }
 }
