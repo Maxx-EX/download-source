@@ -20,8 +20,10 @@ object UpdateManager {
 
     data class ReleaseInfo(val version: String, val downloadUrl: String, val changelog: String, val isZeta: Boolean)
 
-    suspend fun checkUpdate(currentVersionName: String): ReleaseInfo? = withContext(Dispatchers.IO) {
+    // 修复：传入的 currentVersion 必须去掉后缀，如 6.0.7-zeta 变为 6.0.7
+    suspend fun checkUpdate(rawCurrentVersion: String): ReleaseInfo? = withContext(Dispatchers.IO) {
         try {
+            val currentVersion = rawCurrentVersion.substringBefore("-").trim()
             val req = Request.Builder()
                 .url("https://api.github.com/repos/$REPO/releases?per_page=100")
                 .header("User-Agent", "DownloadSource")
@@ -34,7 +36,7 @@ object UpdateManager {
                 val targetName = if (isZetaChannel) "Zeta" else "Omega"
 
                 var bestRelease: ReleaseInfo? = null
-                var maxVersion = currentVersionName
+                var maxVersion = currentVersion
 
                 for (element in jsonArray) {
                     val json = element.asJsonObject
@@ -45,7 +47,7 @@ object UpdateManager {
                     val assets = json.getAsJsonArray("assets")
                     
                     val rawTag = tag.removePrefix("v")
-                    val remoteVersionName = rawTag.substringBefore("-build").substringBefore("-zeta").substringBefore("-omega")
+                    val remoteVersionName = rawTag.substringBefore("-build").substringBefore("-zeta").substringBefore("-omega").trim()
 
                     val apkUrl = assets.firstOrNull { 
                         val name = it.asJsonObject.get("name").asString
@@ -87,20 +89,11 @@ object UpdateManager {
         AlertDialog.Builder(ctx)
             .setTitle(title)
             .setMessage(content)
-            .setPositiveButton("后台极速下载") { _, _ -> 
-                // 核心升级：直接调用内置下载器
-                DownloadManager.add(
-                    context = ctx,
-                    url = info.downloadUrl,
-                    customName = "DownloadSource_Update_v${info.version}.apk",
-                    threads = 8,
-                    speedLimitKb = 0,
-                    headers = emptyMap(),
-                    baseDir = DirStore.resolveDownloadDir(ctx)
-                )
-                android.widget.Toast.makeText(ctx, "已加入下载队列，下载完成后会自动弹出安装", android.widget.Toast.LENGTH_LONG).show()
+            .setPositiveButton("立即更新") { _, _ -> 
+                DownloadManager.add(ctx, info.downloadUrl, "DownloadSource_Update_v${info.version}.apk", 8, 0, emptyMap(), DirStore.resolveDownloadDir(ctx))
+                android.widget.Toast.makeText(ctx, "已加入下载队列，完成后自动弹出安装", android.widget.Toast.LENGTH_LONG).show()
             }
             .setNeutralButton("忽略此版本") { _, _ -> ThemeStore.setIgnoreVersion(ctx, info.version) }
-            .setNegativeButton("取消", null).show()
+            .setNegativeButton("稍后", null).show()
     }
 }

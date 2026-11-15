@@ -63,18 +63,15 @@ fun SettingsScreen(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
     
-    // 主题与引擎
     var themeStyle by remember { mutableIntStateOf(ThemeStore.getThemeStyle(ctx)) }
     var engine by remember { mutableStateOf(BrowserPrefs.getEngine(ctx)) }
     var snifferType by remember { mutableIntStateOf(BrowserPrefs.getSnifferType(ctx)) }
     
-    // 密码与网络
     var currentLock by remember { mutableStateOf(ThemeStore.getLockPassword(ctx)) }
     var showPwdDialog by remember { mutableStateOf(false) }
     var inputPwd by remember { mutableStateOf("") }
     var serverIp by remember { mutableStateOf(if (LocalWebServer.isRunning) "已开启" else "未启动") }
     
-    // 彩蛋与弹窗
     var versionClickCount by remember { mutableIntStateOf(0) }
     var showPoem by remember { mutableStateOf(false) }
     var poemText by remember { mutableStateOf("") }
@@ -83,29 +80,29 @@ fun SettingsScreen(onClose: () -> Unit) {
     var showDonate by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
-        // 顶栏与彩蛋触发点
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Back", tint = palette.onSurface, modifier = Modifier.rotate(180f)) }
             Text("设置 (v${BuildConfig.VERSION_NAME})", modifier = Modifier.clickable { 
                 versionClickCount++
-                if (versionClickCount >= 10) { 
-                    poemText = PoemEasterEgg.getRandomPoem()
-                    showPoem = true
-                    versionClickCount = 0 
-                }
+                if (versionClickCount >= 10) { poemText = PoemEasterEgg.getRandomPoem(); showPoem = true; versionClickCount = 0 }
             }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = palette.onSurface)
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             
-            // 1. 基础更新
             SettingsGroup {
                 SettingsRow("检查更新", if (checking) "检测中..." else "检查最新版", Icons.Default.Update) {
-                    if (!checking) { checking = true; scope.launch { val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME); checking = false; if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版", Toast.LENGTH_SHORT).show() } }
+                    if (!checking) { 
+                        checking = true; 
+                        scope.launch { 
+                            val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME.substringBefore("-"))
+                            checking = false; 
+                            if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版", Toast.LENGTH_SHORT).show() 
+                        } 
+                    }
                 }
             }
 
-            // 2. 外观与引擎
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("主题风格", color = palette.onSurface, modifier = Modifier.weight(1f))
@@ -141,14 +138,12 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
-            // 3. 极客与远程
             SettingsGroup {
                 SettingsRow("Aria2 远程下载", Aria2Manager.getServer(ctx).ifBlank { "未配置" }, Icons.Default.Router) { showAria2Dialog = true }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
                 SettingsRow("油猴脚本 (Tampermonkey)", "注入自定义 JS", Icons.Default.Code) { showTmDialog = true }
             }
 
-            // 4. 安全与保护
             SettingsGroup {
                 SettingsRow("应用锁 (15分钟免密)", if (currentLock != null) "已开启" else "未开启", Icons.Default.Lock) { showPwdDialog = true }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
@@ -157,7 +152,6 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
-            // 5. 工具与清理
             SettingsGroup {
                 SettingsRow("局域网互传", serverIp, Icons.Default.Wifi) {
                     if (LocalWebServer.isRunning) {
@@ -180,12 +174,11 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
             
-            // 6. 关于与赞赏
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().clickable { 
                     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Maxx-EX/download-source"))) 
                 }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Image(painter = painterResource(id = R.drawable.ic_github), contentDescription = "GitHub", modifier = Modifier.size(24.dp))
+                    Icon(Icons.Default.Info, null, tint = palette.onSurface)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("GitHub 仓库", color = palette.onSurface, fontWeight = FontWeight.Medium)
@@ -256,7 +249,7 @@ fun SettingsScreen(onClose: () -> Unit) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("感谢赞助 (๑•̀ㅂ•́)و✧", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
                 Spacer(Modifier.height(16.dp))
-                // 请确保你的 res/drawable 文件夹里有 donate_qr.png
+                // 请确保 res/drawable 里有 donate_qr.png
                 Image(painter = painterResource(id = R.drawable.donate_qr), contentDescription = "QR", contentScale = ContentScale.Fit, modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { showDonate = false }, modifier = Modifier.fillMaxWidth()) { Text("关闭") }

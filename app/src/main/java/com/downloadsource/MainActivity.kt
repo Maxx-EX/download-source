@@ -92,7 +92,8 @@ class MainActivity : ComponentActivity() {
                             SecureLockScreen(onUnlock = { isLocked = false }) 
                         } else {
                             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-                            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+                            // 修复：传入前剥离后缀
+                            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME.substringBefore("-")) }
                             
                             if (clipboardUrl != null) {
                                 AlertDialog(
@@ -111,7 +112,7 @@ class MainActivity : ComponentActivity() {
                                 val ctx = LocalContext.current
                                 AlertDialog(
                                     onDismissRequest = { updateInfo = null }, 
-                                    title = { Text("发现新版本") }, 
+                                    title = { Text("发现新版本 v${updateInfo?.version}") }, 
                                     text = { Text(updateInfo?.changelog ?: "") }, 
                                     confirmButton = { 
                                         TextButton(onClick = { 
@@ -127,7 +128,7 @@ class MainActivity : ComponentActivity() {
                             
                             val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
                             LaunchedEffect(tasks) {
-                                val intent = android.content.Intent(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE)
+                                val intent = Intent(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE)
                                 intent.setClass(this@MainActivity, com.downloadsource.core.DownloadWidget::class.java)
                                 val ids = android.appwidget.AppWidgetManager.getInstance(this@MainActivity).getAppWidgetIds(
                                     android.content.ComponentName(this@MainActivity, com.downloadsource.core.DownloadWidget::class.java)
@@ -216,7 +217,6 @@ fun MainScaffold() {
             }
         }
         
-        // 悬浮球
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -307,19 +307,17 @@ fun DownloadScreen() {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
-                        if (BuildConfig.CHANNEL == "zeta") {
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.background(Color.Red, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                                Text("内测", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                        Spacer(Modifier.width(8.dp))
+                        // 修复：两个版本全部显示标签
+                        Box(Modifier.background(if (BuildConfig.CHANNEL == "zeta") Color.Red else Color(0xFF3B82F6), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                            Text(if (BuildConfig.CHANNEL == "zeta") "内测" else "发行", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
                 
-                if (BuildConfig.CHANNEL == "zeta") {
-                    IconButton(onClick = { ctx.startActivity(Intent(ctx, NetDiskActivity::class.java)) }) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
-                }
+                // 内测功能对全版本开放
+                IconButton(onClick = { ctx.startActivity(Intent(ctx, NetDiskActivity::class.java)) }) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
                 IconButton(onClick = { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
             }
             Spacer(Modifier.height(16.dp))
