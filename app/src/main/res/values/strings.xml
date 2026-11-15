@@ -1,5 +1,5 @@
 <resources>
-    <string name="download_dir">Download directory</string>
-    <string name="pick_folder">Pick folder</string>
-    <string name="search_hint">Search or paste URL</string>
+    <string name="app_name">Download source</string>
+    <string name="shortcut_new_task">新建下载</string>
+    <string name="shortcut_vault">私密保险箱</string>
 </resources>
