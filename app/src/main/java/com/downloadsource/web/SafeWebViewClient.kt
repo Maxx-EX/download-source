@@ -13,17 +13,10 @@ open class SafeWebViewClient(
     private val onPlayM3u8: (String) -> Unit = {}
 ) : WebViewClient() {
 
-    private val blockedSchemes = setOf("baiduboxapp", "baiduboxlite", "intent", "market", "tbopen")
+    private val blockedSchemes = setOf("baiduboxapp", "baiduboxlite")
     private val downloadExtensions = listOf(".mp4", ".mkv", ".mp3", ".m3u8", ".zip", ".rar", ".apk", ".pdf", ".exe")
+    private val adHosts = setOf("doubleclick.net", "google-analytics.com", "googlesyndication.com", "cpro.baidu.com")
 
-    // 广告拦截黑名单
-    private val adHosts = setOf(
-        "doubleclick.net", "google-analytics.com", "googlesyndication.com",
-        "cpro.baidu.com", "pos.baidu.com", "hm.baidu.com", "s.click.taobao.com",
-        "uland.taobao.com", "cnzz.com", "umeng.com"
-    )
-
-    // 修复：参数使用非空类型，与父类一致
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString().lowercase()
         if (adHosts.any { url.contains(it) }) {
@@ -38,6 +31,23 @@ open class SafeWebViewClient(
         val url = uri.toString()
 
         if (scheme in blockedSchemes) return true
+
+        // 核心修复：拦截并唤醒 QQ/微信/支付宝 等外部 App
+        if (scheme == "intent") {
+            try {
+                val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+                intent.addCategory(Intent.CATEGORY_BROWSABLE)
+                view.context.startActivity(intent)
+                return true
+            } catch (e: Exception) { return true }
+        }
+        if (scheme == "mqq" || scheme == "weixin" || scheme == "alipays" || scheme == "taobao") {
+            try {
+                view.context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                return true
+            } catch (e: Exception) { return true }
+        }
+
         if (downloadExtensions.any { url.contains(it, ignoreCase = true) }) {
             if (url.contains(".m3u8")) onPlayM3u8(url) else onDownloadRequest(url)
             return true 

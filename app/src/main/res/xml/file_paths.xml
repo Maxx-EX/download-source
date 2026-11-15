@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- 修复：精准覆盖 App 专属的下载目录 -->
     <external-files-path name="downloads" path="DownloadSource/" />
-    <external-files-path name="downloads_sub" path="." />
-    <!-- 兼容部分用户选的外部路径 -->
-    <external-path name="external_downloads" path="DownloadSource/" />
     <external-path name="root" path="." />
+    <cache-path name="cache" path="." />
 </paths>

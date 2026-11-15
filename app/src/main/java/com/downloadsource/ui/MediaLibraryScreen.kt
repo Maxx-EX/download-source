@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,15 +21,16 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
+import androidx.compose.ui.window.Dialog
+import com.downloadsource.ThemeStore
 import com.downloadsource.storage.DirStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,79 +39,77 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
     val palette = LocalPalette.current
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     var selectedFilter by remember { mutableStateOf("全部") }
-    var isSelectionMode by remember { mutableStateOf(false) }
-    val selectedFiles = remember { mutableStateListOf<File>() }
-    
-    // 新功能：搜索与排序
     var searchQuery by remember { mutableStateOf("") }
-    var sortBy by remember { mutableStateOf("时间") } // 时间/大小
+    var sortBy by remember { mutableStateOf("时间") } 
+    
+    // 私密保险箱状态
+    var showVault by remember { mutableStateOf(false) }
+    var showVaultAuth by remember { mutableStateOf(false) }
+    var vaultPwd by remember { mutableStateOf("") }
+    var vaultFiles by remember { mutableStateOf<List<File>>(emptyList()) }
 
     val filters = listOf("全部", "视频", "音频", "安装包")
 
-    LaunchedEffect(selectedFilter) {
+    LaunchedEffect(selectedFilter, showVault) {
         withContext(Dispatchers.IO) {
-            val dir = DirStore.resolveDownloadDir(ctx)
-            files = dir.listFiles()?.filter { it.isFile && !it.name.startsWith(".") } ?: emptyList()
+            if (!showVault) {
+                val dir = DirStore.resolveDownloadDir(ctx)
+                files = dir.listFiles()?.filter { it.isFile && !it.name.startsWith(".") } ?: emptyList()
+            } else {
+                val vaultDir = File(DirStore.resolveDownloadDir(ctx), ".vault")
+                if (!vaultDir.exists()) vaultDir.mkdirs()
+                vaultFiles = vaultDir.listFiles()?.filter { it.isFile } ?: emptyList()
+            }
         }
     }
 
-    // 修复分享逻辑
-    val zipAndShare = {
-        val targetFiles = if (isSelectionMode) selectedFiles.toList() else files
-        if (targetFiles.isNotEmpty()) {
-            try {
-                if (targetFiles.size == 1) {
-                    // 单文件直接分享，不打包
-                    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", targetFiles[0])
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "*/*"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    ctx.startActivity(Intent.createChooser(intent, "分享文件"))
-                } else {
-                    // 多文件打包 ZIP
-                    val zipFile = File(ctx.cacheDir, "batch_${System.currentTimeMillis()}.zip")
-                    ZipOutputStream(zipFile.outputStream().buffered()).use { zos ->
-                        targetFiles.forEach { f ->
-                            zos.putNextEntry(ZipEntry(f.name))
-                            f.inputStream().use { it.copyTo(zos) }
-                            zos.closeEntry()
+    // 私密空间界面
+    if (showVault) {
+        Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { showVault = false }) { Icon(Icons.Default.ArrowBack, null, tint = palette.onSurface) }
+                Text("🔒 私密保险箱", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+            }
+            Spacer(Modifier.height(16.dp))
+            if (vaultFiles.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("保险箱空空如也", color = palette.onSurfaceDim) }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(vaultFiles) { file ->
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface).clickable { onPlayVideo(file) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (file.name.endsWith(".mp4")) Icons.Default.VideoFile else Icons.Default.InsertDriveFile, null, tint = palette.primary.first())
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(file.name, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text("${file.length() / 1024} KB", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+                            }
+                            IconButton(onClick = { 
+                                // 移出私密空间
+                                val dest = File(DirStore.resolveDownloadDir(ctx), file.name)
+                                file.renameTo(dest)
+                                vaultFiles = vaultFiles - file
+                            }) { Icon(Icons.Default.LockOpen, "移出", tint = palette.primary.first()) }
                         }
                     }
-                    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", zipFile)
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "application/zip"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    ctx.startActivity(Intent.createChooser(intent, "分享打包文件"))
                 }
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(ctx, "分享失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
             }
-            isSelectionMode = false
-            selectedFiles.clear()
         }
+        return
     }
 
+    // 普通文件库界面
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("文件库", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface, modifier = Modifier.weight(1f))
-            if (isSelectionMode) {
-                IconButton(onClick = zipAndShare) { Icon(Icons.Default.Share, "分享", tint = palette.primary.first()) }
-                IconButton(onClick = {
-                    selectedFiles.forEach { it.delete() }
-                    files = files - selectedFiles.toSet()
-                    isSelectionMode = false
-                    selectedFiles.clear()
-                }) { Icon(Icons.Default.Delete, "删除", tint = Color.Red) }
-                TextButton(onClick = { isSelectionMode = false; selectedFiles.clear() }) { Text("取消") }
-            } else {
-                IconButton(onClick = { sortBy = if (sortBy == "时间") "大小" else "时间" }) {
-                    Icon(Icons.Default.Sort, null, tint = palette.onSurface)
+            
+            // 保险箱入口
+            if (ThemeStore.getLockPassword(ctx) != null) {
+                IconButton(onClick = { showVaultAuth = true }) { 
+                    Icon(Icons.Default.Lock, "私密保险箱", tint = palette.primary.first()) 
                 }
-                TextButton(onClick = { isSelectionMode = true }) { Text("选择") }
+            }
+            IconButton(onClick = { sortBy = if (sortBy == "时间") "大小" else "时间" }) {
+                Icon(Icons.Default.Sort, null, tint = palette.onSurface)
             }
         }
         
@@ -159,26 +159,51 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface)
                             .clickable {
-                                if (isSelectionMode) {
-                                    if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file)
-                                } else {
-                                    if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) onPlayVideo(file)
-                                }
+                                if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) onPlayVideo(file)
                             }.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (isSelectionMode) {
-                            Checkbox(checked = selectedFiles.contains(file), onCheckedChange = { 
-                                if (it) selectedFiles.add(file) else selectedFiles.remove(file) 
-                            })
-                            Spacer(Modifier.width(8.dp))
-                        }
                         Column(Modifier.weight(1f)) {
                             Text(file.name, color = palette.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${file.length() / 1024 / 1024} MB · ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(file.lastModified())}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                         }
+                        IconButton(onClick = { 
+                            // 移入私密空间
+                            val vaultDir = File(DirStore.resolveDownloadDir(ctx), ".vault")
+                            if (!vaultDir.exists()) vaultDir.mkdirs()
+                            val dest = File(vaultDir, file.name)
+                            file.renameTo(dest)
+                            files = files - file
+                        }) { Icon(Icons.Default.Lock, "移入加密箱", tint = palette.onSurfaceDim) }
+                        IconButton(onClick = { if (file.delete()) files = files - file }) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
                     }
                 }
+            }
+        }
+    }
+
+    // 私密空间密码验证弹窗
+    if (showVaultAuth) {
+        Dialog(onDismissRequest = { showVaultAuth = false }) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("验证密码", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = vaultPwd, onValueChange = { vaultPwd = it }, 
+                    label = { Text("输入应用锁密码") }, 
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = {
+                    if (ThemeStore.verifyLockPassword(ctx, vaultPwd)) {
+                        showVault = true
+                        showVaultAuth = false
+                        vaultPwd = ""
+                    } else {
+                        android.widget.Toast.makeText(ctx, "密码错误", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("解锁") }
             }
         }
     }

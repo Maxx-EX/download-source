@@ -30,9 +30,9 @@ fun AddTaskDialog(
 ) {
     val ctx = LocalContext.current
     var url by remember { mutableStateOf(if (initialUrl.isNotBlank()) initialUrl else getClipboardUrl(ctx) ?: "") }
-    // 接收 JS 传来的文件名
     var name by remember { mutableStateOf(initialName) }
     var threads by remember { mutableFloatStateOf(8f) }
+    // 限速拉满到 10MB/s = 10240 KB/s
     var speedLimit by remember { mutableFloatStateOf(0f) }
     var referer by remember { mutableStateOf("") }
     var userAgent by remember { mutableStateOf("") }
@@ -61,10 +61,15 @@ fun AddTaskDialog(
             
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("限速 (0为不限)", color = palette.onSurface, style = MaterialTheme.typography.bodyMedium)
-                    Text(if (speedLimit == 0f) "∞" else "${speedLimit.toLong()} KB/s", color = palette.primary.first(), fontWeight = FontWeight.Bold)
+                    Text("限速 (最大 10MB/s)", color = palette.onSurface, style = MaterialTheme.typography.bodyMedium)
+                    val text = if (speedLimit == 0f) "不限速" else {
+                        if (speedLimit >= 1024f) String.format("%.1f MB/s", speedLimit / 1024f)
+                        else "${speedLimit.toLong()} KB/s"
+                    }
+                    Text(text, color = palette.primary.first(), fontWeight = FontWeight.Bold)
                 }
-                Slider(value = speedLimit, onValueChange = { speedLimit = it }, valueRange = 0f..2048f, steps = 63)
+                // 修改上限
+                Slider(value = speedLimit, onValueChange = { speedLimit = it }, valueRange = 0f..10240f, steps = 100)
             }
 
             Row(Modifier.fillMaxWidth().clickable { showAdvanced = !showAdvanced }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

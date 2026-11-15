@@ -31,6 +31,16 @@ import com.downloadsource.ui.*
 import com.downloadsource.utils.PyRuleEngine
 
 class MainActivity : ComponentActivity() {
+    // 15分钟免密校验
+    private fun shouldLock(): Boolean {
+        val pwd = ThemeStore.getLockPassword(this)
+        if (pwd == null) return false
+        val lastTime = ThemeStore.getLastUnlockTime(this)
+        val currentTime = System.currentTimeMillis()
+        // 15分钟 = 15 * 60 * 1000 = 900,000 毫秒
+        return (currentTime - lastTime) > 900_000L
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PyRuleEngine.init(this)
@@ -39,13 +49,36 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.fillMaxSize().background(palette.background.first())) {
                 GradientBackground(palette) {
                     MaterialTheme(typography = SafeTypography) {
-                        var isLocked by remember { mutableStateOf(false) }
-                        LifecycleResumeEffect(Unit) { if (ThemeStore.getLockPassword(this@MainActivity) != null) isLocked = true; onPauseOrDispose {} }
-                        if (isLocked) { SecureLockScreen(onUnlock = { isLocked = false }) } 
-                        else {
+                        // 初始判断是否上锁
+                        var isLocked by remember { mutableStateOf(shouldLock()) }
+                        
+                        LifecycleResumeEffect(Unit) {
+                            if (shouldLock()) {
+                                isLocked = true
+                            }
+                            onPauseOrDispose {}
+                        }
+                        
+                        if (isLocked) { 
+                            SecureLockScreen(onUnlock = { isLocked = false }) 
+                        } else {
                             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
                             LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
-                            if (updateInfo != null) { val ctx = LocalContext.current; AlertDialog(onDismissRequest = { updateInfo = null }, title = { Text("发现新版本") }, text = { Text(updateInfo?.changelog ?: "") }, confirmButton = { TextButton(onClick = { updateInfo = null }) { Text("去下载") } }) }
+                            if (updateInfo != null) { 
+                                val ctx = LocalContext.current
+                                AlertDialog(
+                                    onDismissRequest = { updateInfo = null }, 
+                                    title = { Text("发现新版本") }, 
+                                    text = { Text(updateInfo?.changelog ?: "") }, 
+                                    confirmButton = { 
+                                        TextButton(onClick = { 
+                                            com.downloadsource.core.DownloadManager.add(ctx, updateInfo!!.downloadUrl, "DownloadSource_Update_${updateInfo?.version}.apk", 8, 0, emptyMap(), com.downloadsource.storage.DirStore.resolveDownloadDir(ctx))
+                                            updateInfo = null 
+                                        }) { Text("立即更新") } 
+                                    },
+                                    dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
+                                )
+                            }
                             MainScaffold()
                         }
                     }
@@ -62,18 +95,30 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
     var inputPwd by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
     val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
+    
     Column(Modifier.fillMaxSize().background(palette.background.first()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = palette.primary.first())
         Text("安全验证", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 24.dp)) { repeat(inputPwd.length.coerceAtMost(8)) { Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first())) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 24.dp)) { 
+            repeat(inputPwd.length.coerceAtMost(8)) { Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first())) } 
+        }
         Text(errorMsg, color = Color.Red, fontSize = 14.sp)
         LazyVerticalGrid(columns = GridCells.Fixed(6), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().height(300.dp)) {
             items(keys) { key ->
                 Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).clickable {
                     errorMsg = ""
                     if (key == "DEL") { if (inputPwd.isNotEmpty()) inputPwd = inputPwd.dropLast(1) } else { if (inputPwd.length < 8) inputPwd += key }
-                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码错误"; inputPwd = "" } }
-                }, contentAlignment = Alignment.Center) { if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) }
+                    if (inputPwd.length >= 4) { 
+                        if (ThemeStore.verifyLockPassword(ctx, inputPwd)) {
+                            onUnlock() // verifyLockPassword 内部已经自动刷新了时间戳
+                        } else if (inputPwd.length == 8) { 
+                            errorMsg = "密码错误"
+                            inputPwd = "" 
+                        } 
+                    }
+                }, contentAlignment = Alignment.Center) { 
+                    if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) 
+                }
             }
         }
     }
