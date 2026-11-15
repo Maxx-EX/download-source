@@ -3,6 +3,7 @@ package com.downloadsource.ui
 import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Rational
 import android.webkit.*
@@ -35,14 +36,43 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val activity = ctx as? MainActivity
-    var webView by remember { mutableStateOf<WebView?>(null) }
+    
+    // 修复：将 WebView 实例存在 remember 中，防止重组时重建
+    val webView = remember {
+        WebView(ctx).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+        }
+    }
+    
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
     var showDownloadDialog by remember { mutableStateOf(false) }
     val webInterceptor = remember { WebInterceptor() }
 
-    DisposableEffect(Unit) { onDispose { webView?.destroy() } }
+    DisposableEffect(Unit) {
+        webView.addJavascriptInterface(webInterceptor, "AndroidBridge")
+        webView.webViewClient = object : SafeWebViewClient(
+            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
+            onPlayM3u8 = { url -> onPlayStream(url) }
+        ) {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                val tampermonkeyJs = ctx.getSharedPreferences("tampermonkey", Context.MODE_PRIVATE).getString("js", "")
+                if (!tampermonkeyJs.isNullOrBlank()) view?.evaluateJavascript(tampermonkeyJs, null)
+            }
+        }
+        webView.loadUrl(currentUrl)
+        
+        onDispose {
+            webView.stopLoading()
+            webView.destroy()
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -55,27 +85,12 @@ fun BrowserScreen(
                 }) { Icon(Icons.Default.PictureInPicture, null) }
             }
             AndroidView(
-                factory = { c ->
-                    WebView(c).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        addJavascriptInterface(webInterceptor, "AndroidBridge")
-                        webViewClient = object : SafeWebViewClient(
-                            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
-                            onPlayM3u8 = { url -> onPlayStream(url) }
-                        ) {
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                val tampermonkeyJs = ctx.getSharedPreferences("tampermonkey", Context.MODE_PRIVATE).getString("js", "")
-                                if (!tampermonkeyJs.isNullOrBlank()) view?.evaluateJavascript(tampermonkeyJs, null)
-                            }
-                        }
-                        loadUrl(currentUrl); webView = this
-                    }
-                }, modifier = Modifier.fillMaxSize()
+                factory = { webView },
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
+    
     if (showDownloadDialog) {
         AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
             DownloadManager.add(ctx, url, name, threads, speed, headers, DirStore.resolveDownloadDir(ctx))
