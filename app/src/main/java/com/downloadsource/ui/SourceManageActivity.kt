@@ -1,13 +1,18 @@
 package com.downloadsource.ui
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,7 +22,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.downloadsource.core.MirrorResolver
-import com.downloadsource.core.MirrorStore
 
 class SourceManageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,27 +37,77 @@ class SourceManageActivity : ComponentActivity() {
 fun SourceScreen() {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    var enabled by remember { mutableStateOf(MirrorStore.getEnabled(ctx)) }
+    var enabledList by remember { mutableStateOf(MirrorResolver.load(ctx)) }
+    var inputUrl by remember { mutableStateOf("") }
+
+    // 修复：合并常量源和用户自定义源，并将勾选的置顶
+    val allSources = (MirrorResolver.AVAILABLE_MIRRORS + enabledList).distinct()
+    val sortedMirrors = allSources.sortedByDescending { enabledList.contains(it) }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Text("镜像源选择", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
-        Text("勾选你需要的镜像源，下载 GitHub 时会自动使用。", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+        Text("镜像源管理", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = palette.onSurface)
+        Text("勾选启用的镜像源（已勾选优先排列）", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(16.dp))
+
+        // 自定义添加框
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = inputUrl,
+                onValueChange = { inputUrl = it },
+                placeholder = { Text("添加自定义镜像 (http...)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = {
+                val url = inputUrl.trim()
+                if (url.isNotBlank() && url.startsWith("http")) {
+                    if (!enabledList.contains(url)) {
+                        enabledList = enabledList + url
+                        MirrorResolver.save(ctx, enabledList)
+                        Toast.makeText(ctx, "添加成功", Toast.LENGTH_SHORT).show()
+                        inputUrl = ""
+                    } else {
+                        Toast.makeText(ctx, "该源已存在并启用", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(ctx, "请输入合法的 URL", Toast.LENGTH_SHORT).show()
+                }
+            }) { Icon(Icons.Default.Add, null) }
+        }
+
         Spacer(Modifier.height(16.dp))
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(MirrorResolver.AVAILABLE_MIRRORS) { m ->
-                val isChecked = enabled.contains(m)
+            items(sortedMirrors) { mirror ->
+                val isChecked = enabledList.contains(mirror)
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { 
-                        val newList = if (isChecked) enabled - m else enabled + m
-                        enabled = newList
-                        MirrorStore.setEnabled(ctx, newList)
-                    }.padding(12.dp),
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isChecked) palette.primary.copy(alpha = 0.15f) else palette.surface)
+                        .clickable {
+                            enabledList = if (isChecked) enabledList - mirror else enabledList + mirror
+                            MirrorResolver.save(ctx, enabledList)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(checked = isChecked, onCheckedChange = null)
-                    Spacer(Modifier.width(12.dp))
-                    Text(if (m.isBlank()) "原生直连 (不加速)" else m, color = palette.onSurface, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (mirror.isBlank()) "原生直连 (不加速)" else mirror,
+                        color = palette.onSurface,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
+                    )
+                    // 对于用户自定义的源（不在官方列表里的），允许删除
+                    if (!MirrorResolver.AVAILABLE_MIRRORS.contains(mirror) && mirror.isNotBlank()) {
+                        IconButton(onClick = {
+                            enabledList = enabledList - mirror
+                            MirrorResolver.save(ctx, enabledList)
+                        }) { Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim) }
+                    }
                 }
             }
         }

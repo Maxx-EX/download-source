@@ -1,50 +1,51 @@
 package com.downloadsource.core
 
 import android.content.Context
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 object MirrorResolver {
-    private val client = OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).build()
-    
-    // 手动选择镜像源列表
+    private const val PREF = "mirrors"
+    private const val KEY_LIST = "enabled_list"
+
+    // 全面恢复 20 个最常用的镜像源（包含各大高校和云厂商）
     val AVAILABLE_MIRRORS = listOf(
-        "https://ghproxy.net/",
-        "https://ghfast.top/",
+        "https://mirrors.tuna.tsinghua.edu.cn/github-release/",
+        "https://mirrors.aliyun.com/github-release/",
+        "https://mirrors.ustc.edu.cn/github-release/",
+        "https://mirrors.huaweicloud.com/github-release/",
+        "https://mirrors.cloud.tencent.com/github-release/",
+        "https://ghproxy.com/",
         "https://gh-proxy.com/",
+        "https://ghfast.top/",
+        "https://ghproxy.net/",
+        "https://ghps.cc/",
+        "https://hub.fastgit.xyz/",
         "https://kkgithub.com/",
+        "https://gitclone.com/",
+        "https://gh.api.99988866.xyz/",
+        "https://ghproxy.cc/",
+        "https://gh-proxy.net/",
+        "https://download.fastgit.org/",
+        "https://github.com.cnpmjs.org/",
         "https://mirror.ghproxy.com/",
         "" // 直连
     )
 
-    // 功能 1：GitHub 镜像测速与自动切换
-    suspend fun resolveFastest(context: Context, url: String): String = withContext(Dispatchers.IO) {
-        if (!url.contains("github.com") && !url.contains("githubusercontent.com")) return@withContext url
-        
-        val enabledMirrors = MirrorStore.getEnabled(context)
-        if (enabledMirrors.isEmpty()) return@withContext url
-        
-        // 取首个启用的镜像，带有重试容错
-        val mirror = enabledMirrors.first()
-        if (mirror.isBlank()) return@withContext url
-        if (mirror.endsWith("/")) "$mirror$url" else "$mirror/$url"
-    }
-}
-
-object MirrorStore {
-    private const val PREF = "mirrors"
-    private const val KEY = "enabled_list"
-
-    // 默认启用的源
-    fun getEnabled(context: Context): List<String> {
-        val set = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getStringSet(KEY, setOf("https://ghproxy.net/")) ?: setOf()
+    fun load(context: Context): List<String> {
+        val set = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getStringSet(KEY_LIST, setOf("https://ghproxy.com/", "")) ?: setOf("https://ghproxy.com/", "")
         return set.toList()
     }
 
-    fun setEnabled(context: Context, list: List<String>) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putStringSet(KEY, list.toSet()).apply()
+    fun save(context: Context, list: List<String>) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putStringSet(KEY_LIST, list.toSet()).apply()
+    }
+
+    fun resolveFastest(context: Context, url: String): String {
+        if (!url.contains("github.com") && !url.contains("githubusercontent.com")) return url
+        val enabledMirrors = load(context).filter { it.isNotBlank() }
+        if (enabledMirrors.isEmpty()) return url
+        val mirror = enabledMirrors.first()
+        return if (mirror.endsWith("/")) "$mirror$url" else "$mirror/$url"
     }
 }
