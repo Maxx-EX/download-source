@@ -1,7 +1,10 @@
 package com.downloadsource.core
 
 import android.content.Context
+import android.content.Intent
 import android.media.MediaScannerConnection
+import android.net.Uri
+import androidx.core.content.FileProvider
 import com.downloadsource.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +27,7 @@ object DownloadManager {
     private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
     private val mutex = Mutex()
-    private const val MAX_CONCURRENT = 3
+    private const val MAX_CONCURRENT = 3 // 智能排队限制
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -47,11 +50,9 @@ object DownloadManager {
                 val shareInfo = NetDiskParser.detect(url)
                 if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
                     if (BuildConfig.CHANNEL == "zeta") {
-                        // 解析出多个文件列表
                         val results = DiskParser.parse(context, shareInfo.url, shareInfo.pwd)
                         remove(context, task.id) // 移除占位任务
                         
-                        // 将所有解析结果加入下载队列
                         for ((fileName, downloadUrl) in results) {
                             val newTask = DownloadTask(url = downloadUrl, fileName = fileName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
                             mutex.withLock { _tasks.value = _tasks.value + newTask }
@@ -65,7 +66,6 @@ object DownloadManager {
                 }
                 
                 var parsedUrl = MirrorResolver.resolveFastest(context, url)
-                
                 if (parsedUrl.startsWith("data:")) {
                     val mime = parsedUrl.substringAfter("data:").substringBefore(";")
                     val ext = mimeToExtension(mime)
@@ -103,7 +103,13 @@ object DownloadManager {
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
                 update(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
-                MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
+                
+                // 新功能：APK 自动安装
+                if (out.name.endsWith(".apk", true)) {
+                    installApk(context, out)
+                } else {
+                    MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
+                }
                 checkPending(context)
             } catch (e: CancellationException) {
                 segmenter.cancelTask(t.id)
@@ -113,6 +119,20 @@ object DownloadManager {
                 update(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "未知错误", speed = 0) }
                 checkPending(context)
             }
+        }
+    }
+    
+    // 触发 APK 安装
+    private fun installApk(context: Context, file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // 如果无权限，静默失败，用户依然可以在文件库手动点开
         }
     }
 
@@ -137,13 +157,10 @@ object DownloadManager {
     fun autoResumeTasks(context: Context) {
         _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
-    
-    // 修复：补回缺失的重命名方法
+
     fun rename(context: Context, id: String, newName: String) {
         val t = _tasks.value.find { it.id == id } ?: return
-        val dir = File(t.dirPath)
-        val oldFile = File(dir, t.fileName)
-        val newFile = File(dir, newName)
+        val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)
         if (oldFile.exists()) oldFile.renameTo(newFile)
         update(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
     }
@@ -191,15 +208,13 @@ object DownloadManager {
             mime.contains("video/mp4") -> ".mp4"
             mime.contains("video/quicktime") -> ".mov"
             mime.contains("video/x-matroska") -> ".mkv"
-            mime.contains("video/webm") -> ".webm"
             mime.contains("audio/mpeg") -> ".mp3"
-            mime.contains("audio/aac") -> ".aac"
             mime.contains("application/vnd.android.package-archive") -> ".apk"
             mime.contains("application/pdf") -> ".pdf"
             mime.contains("image/jpeg") -> ".jpg"
             mime.contains("image/png") -> ".png"
             mime.contains("application/zip") -> ".zip"
-            else -> ".bin" // 兜底
+            else -> ".bin"
         }
     }
 }

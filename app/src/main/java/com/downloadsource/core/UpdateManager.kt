@@ -20,9 +20,8 @@ object UpdateManager {
 
     suspend fun checkUpdate(currentVersionCode: Int): ReleaseInfo? = withContext(Dispatchers.IO) {
         try {
-            // 拉取最近的发布列表，而不是只拿 latest，防止被草稿或旧版干扰
             val req = Request.Builder()
-                .url("https://api.github.com/repos/$REPO/releases")
+                .url("https://api.github.com/repos/$REPO/releases?per_page=100")
                 .header("User-Agent", "DownloadSource")
                 .build()
                 
@@ -32,33 +31,34 @@ object UpdateManager {
                 val isZetaChannel = BuildConfig.CHANNEL == "zeta"
                 val targetName = if (isZetaChannel) "Zeta" else "Omega"
 
-                // 遍历所有 Release
+                var bestRelease: ReleaseInfo? = null
+                var maxVersionCode = currentVersionCode // 只有比本地大才需要更新
+
                 for (element in jsonArray) {
                     val json = element.asJsonObject
-                    // 忽略草稿和预发布（如果你想包含预发布，可以去掉 draft/prerelease 判断）
                     if (json.get("draft")?.asBoolean == true || json.get("prerelease")?.asBoolean == true) continue
 
                     val tag = json.get("tag_name")?.asString ?: continue
                     val body = json.get("body")?.asString ?: "暂无更新日志"
                     val assets = json.getAsJsonArray("assets")
                     
-                    // 1. 解析版本号 (兼容 v4.5.0-build2 格式)
                     val rawTag = tag.removePrefix("v")
                     val versionName = rawTag.substringBefore("-build")
+                    // 兼容老版本的 build 号解析
                     val remoteVersionCode = rawTag.substringAfter("-build", "-1").toIntOrNull() ?: 0
 
-                    // 2. 查找当前通道对应的 APK
                     val apkUrl = assets.firstOrNull { 
                         val name = it.asJsonObject.get("name").asString
                         name.contains(targetName, true) && name.endsWith(".apk") 
                     }?.asJsonObject?.get("browser_download_url")?.asString
 
-                    // 3. 如果找到了对应的 APK，并且云端版本号大于本地，或者版本名不一致
-                    if (!apkUrl.isNullOrBlank() && remoteVersionCode > currentVersionCode) {
-                        return@withContext ReleaseInfo(versionName, apkUrl, body, isZetaChannel)
+                    // 核心修复：寻找真正的最大版本，不受发布顺序干扰
+                    if (!apkUrl.isNullOrBlank() && remoteVersionCode > maxVersionCode) {
+                        maxVersionCode = remoteVersionCode
+                        bestRelease = ReleaseInfo(versionName, apkUrl, body, isZetaChannel)
                     }
                 }
-                null
+                return@withContext bestRelease
             }
         } catch (e: Exception) { 
             null 
@@ -67,17 +67,14 @@ object UpdateManager {
 
     fun showUpdateDialog(ctx: Context, info: ReleaseInfo) {
         if (ThemeStore.getIgnoreVersion(ctx) == info.version) return
-        
         val channelText = if (info.isZeta) "内测版 (Zeta)" else "正式版 (Omega)"
         val title = "发现新$channelText v${info.version} 🎉"
-        
-        // 针对不同版本，可以在公告前加个提示
         val content = "【当前通道：$channelText】\n\n${info.changelog}"
 
         AlertDialog.Builder(ctx)
             .setTitle(title)
             .setMessage(content)
-            .setPositiveButton("立即更新") { _, _ -> openDownload(ctx, info.downloadUrl) }
+            .setPositiveButton("立即下载") { _, _ -> openDownload(ctx, info.downloadUrl) }
             .setNeutralButton("忽略此版本") { _, _ -> ThemeStore.setIgnoreVersion(ctx, info.version) }
             .setNegativeButton("稍后", null).show()
     }

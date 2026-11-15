@@ -13,7 +13,7 @@ val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
 val localVersionCode = (System.currentTimeMillis() / 60000).toInt()
 
 val injectedVersionCode = ciRunNumber ?: localVersionCode
-val injectedVersionName = System.getenv("VERSION_NAME") ?: "4.6.0"
+val injectedVersionName = System.getenv("VERSION_NAME") ?: "4.7.0"
 val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
