@@ -161,6 +161,7 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold() {
+    val ctx = LocalContext.current
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
     var triggerSniff by remember { mutableStateOf(false) }
@@ -204,7 +205,6 @@ fun MainScaffold() {
             }
         }
         
-        // 悬浮球
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -234,20 +234,19 @@ fun MainScaffold() {
             Icon(Icons.Default.Menu, "Menu", tint = Color.White)
         }
 
-        // 竖排菜单
         if (showMenu) {
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
                 offset = DpOffset(with(density) { offsetX.toDp() }, with(density) { offsetY.toDp() })
             ) {
+                // 修复：这里直接使用在外层获取的 ctx，不再在 onClick 中调用 LocalContext.current
                 DropdownMenuItem(text = { Text("下载列表") }, leadingIcon = { Icon(Icons.Default.Home, null) }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
                 DropdownMenuItem(text = { Text("浏览器") }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
                 DropdownMenuItem(text = { Text("文件库") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { 
                     showMenu = false
-                    val ctx = LocalContext.current
                     ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
                 })
             }
