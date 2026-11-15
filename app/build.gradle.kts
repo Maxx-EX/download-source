@@ -7,9 +7,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// 版本信息注入：CI 环境变量优先，本地 fallback
-val injectedVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-val injectedVersionName = System.getenv("VERSION_NAME") ?: "4.3.0"
+// 核心修复：废弃 Tag 里的 buildXX，改用 CI 的 Run Number，保证绝对递增
+// 本地如果没有环境变量，则使用基于时间的版本号，保证永远比线上大
+val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+val localVersionCode = (System.currentTimeMillis() / 60000).toInt()
+
+val injectedVersionCode = ciRunNumber ?: localVersionCode
+val injectedVersionName = System.getenv("VERSION_NAME") ?: "4.6.0"
 val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
@@ -51,7 +55,6 @@ android {
         }
     }
 
-    // 签名配置：仅当环境变量存在时生效，本地 debug 构建不受影响
     signingConfigs {
         create("release") {
             val ksPath = System.getenv("KEYSTORE_PATH")
@@ -94,6 +97,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
