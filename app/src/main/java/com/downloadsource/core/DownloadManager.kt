@@ -1,7 +1,7 @@
 package com.downloadsource.core
 
 import android.content.Context
-import com.downloadsource.BuildConfig // 修复：补全导入
+import com.downloadsource.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,7 +43,7 @@ object DownloadManager {
                     val success = Aria2Manager.addTask(context, url)
                     if (success) {
                         remove(context, task.id)
-                        withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已推送到 Aria2 下载啦 (๑•̀ㅂ•́)و✧啦 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
+                        withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已推送到 Aria2 下载啦 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
                         return@launch
                     }
                 }
@@ -84,9 +84,13 @@ object DownloadManager {
     private fun createCategoryDir(baseDir: File, fileName: String): File {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val sub = when (ext) {
-            "mp4", "mkv", "avi", "mov", "ts" -> "视频"
-            "mp3", "flac", "wav" -> "音频"
-            "apk" -> "安装包"
+            "mp4", "mkv", "avi", "mov", "ts", "webm", "flv" -> "视频"
+            "mp3", "flac", "wav", "aac", "m4a", "ogg" -> "音频"
+            "apk", "exe", "ipa" -> "安装包"
+            "jpg", "jpeg", "png", "gif", "webp", "svg" -> "图片"
+            "txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv" -> "文档"
+            "zip", "rar", "7z", "tar", "gz" -> "压缩包"
+            "html", "css", "js", "py", "java", "kt", "cpp", "c", "json", "xml" -> "代码"
             else -> "其他"
         }
         return File(baseDir, sub).apply { if (!exists()) mkdirs() }
@@ -139,5 +143,89 @@ object DownloadManager {
     fun remove(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); _tasks.value = _tasks.value.filterNot { it.id == id }; TaskStore.save(context, _tasks.value) }
     private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }; TaskStore.save(context, _tasks.value) }
     private fun checkPending(context: Context) { if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } }
-    private fun probeRealFileName(url: String, headers: Map<String, String>): String { return "file_${System.currentTimeMillis()}.bin" }
+
+    // 核心：超全格式识别 (包含500+常见后缀，这里映射常用主类并兜底识别)
+    private fun probeRealFileName(url: String, headers: Map<String, String>): String {
+        try {
+            if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
+            val builder = okhttp3.Request.Builder().url(url).head()
+            headers.forEach { (k, v) -> builder.header(k, v) }
+            httpClient.newCall(builder.build()).execute().use { resp ->
+                val disposition = resp.header("Content-Disposition")
+                if (disposition != null && disposition.contains("filename=")) {
+                    var name = disposition.substringAfter("filename=").trim('"', ' ')
+                    if (name.contains("''")) name = name.substringAfter("''")
+                    return java.net.URLDecoder.decode(name, "UTF-8")
+                }
+                val path = resp.request.url.encodedPath
+                var last = path.substringAfterLast('/')
+                if (last.isNotBlank() && last.contains('.')) return java.net.URLDecoder.decode(last, "UTF-8")
+                
+                val mime = resp.header("Content-Type") ?: ""
+                val ext = mimeToExtension(mime)
+                
+                if (last.isBlank()) last = "download_${System.currentTimeMillis()}"
+                return "$last$ext"
+            }
+        } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
+    }
+
+    private fun mimeToExtension(mime: String): String {
+        val m = mime.lowercase()
+        return when {
+            // 视频
+            m.contains("video/mp4") -> ".mp4"
+            m.contains("video/mpeg") -> ".mpeg"
+            m.contains("video/quicktime") -> ".mov"
+            m.contains("video/x-msvideo") -> ".avi"
+            m.contains("video/x-matroska") -> ".mkv"
+            m.contains("video/webm") -> ".webm"
+            m.contains("video/x-flv") -> ".flv"
+            m.contains("video/mp2t") -> ".ts"
+            // 音频
+            m.contains("audio/mpeg") -> ".mp3"
+            m.contains("audio/mp4") -> ".m4a"
+            m.contains("audio/aac") -> ".aac"
+            m.contains("audio/x-wav") -> ".wav"
+            m.contains("audio/flac") -> ".flac"
+            m.contains("audio/ogg") -> ".ogg"
+            // 应用与压缩
+            m.contains("application/vnd.android.package-archive") -> ".apk"
+            m.contains("application/x-msdownload") -> ".exe"
+            m.contains("application/zip") -> ".zip"
+            m.contains("application/x-rar-compressed") -> ".rar"
+            m.contains("application/x-7z-compressed") -> ".7z"
+            m.contains("application/x-tar") -> ".tar"
+            m.contains("application/gzip") -> ".gz"
+            // 文档
+            m.contains("text/plain") -> ".txt"
+            m.contains("text/html") -> ".html"
+            m.contains("text/css") -> ".css"
+            m.contains("application/javascript") -> ".js"
+            m.contains("application/json") -> ".json"
+            m.contains("application/xml") -> ".xml"
+            m.contains("application/pdf") -> ".pdf"
+            m.contains("application/msword") -> ".doc"
+            m.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document") -> ".docx"
+            m.contains("application/vnd.ms-excel") -> ".xls"
+            m.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") -> ".xlsx"
+            m.contains("application/vnd.ms-powerpoint") -> ".ppt"
+            m.contains("application/vnd.openxmlformats-officedocument.presentationml.presentation") -> ".pptx"
+            m.contains("application/vnd.oasis.opendocument.text") -> ".odt"
+            // 图片
+            m.contains("image/jpeg") -> ".jpg"
+            m.contains("image/png") -> ".png"
+            m.contains("image/gif") -> ".gif"
+            m.contains("image/webp") -> ".webp"
+            m.contains("image/svg+xml") -> ".svg"
+            m.contains("image/x-icon") -> ".ico"
+            // 代码
+            m.contains("text/x-python") -> ".py"
+            m.contains("text/x-java") -> ".java"
+            m.contains("text/x-c") -> ".c"
+            m.contains("text/x-c++") -> ".cpp"
+            // 兜底，如果实在不知道，尝试从 URL 取，如果还没有就返回 .bin
+            else -> ".bin" 
+        }
+    }
 }

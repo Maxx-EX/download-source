@@ -34,7 +34,7 @@ object LocalWebServer {
             return getIpAddress() + ":$port"
         } catch (e: Exception) {
             isRunning = false
-            return "启动失败: ${e.message}"
+            return "启动失败 (´･_･`)"
         }
     }
 
@@ -51,7 +51,7 @@ object LocalWebServer {
                 val output = PrintWriter(socket.getOutputStream())
                 
                 val requestLine = input.readLine() ?: return@execute
-                if (!requestLine.startsWith("GET")) return@execute
+                if (!requestLine.startsWith("GET") && !requestLine.startsWith("POST")) return@execute
                 
                 var filePath = requestLine.split(" ")[1]
                 if (filePath == "/") filePath = "/index.html"
@@ -71,7 +71,7 @@ object LocalWebServer {
                         fileInput.copyTo(socket.getOutputStream())
                         fileInput.close()
                     } else {
-                        output.print("HTTP/1.1 404 Not Found\r\n\r\nFile Not Found")
+                        output.print("HTTP/1.1 404 Not Found\r\n\r\n文件不存在哦 (´･_･`)")
                         output.flush()
                     }
                 }
@@ -86,24 +86,32 @@ object LocalWebServer {
         val dir = File(Environment.getExternalStorageDirectory(), "DownloadSource")
         val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
         val listHtml = files.joinToString("") { file -> 
-            "<li><a href='/${file.name}'>${file.name}</a> (${file.length() / 1024 / 1024} MB)</li>" 
+            "<li><a href='/${file.name}'>${file.name}</a> <span>(${file.length() / 1024 / 1024} MB)</span></li>" 
         }
         return """
             <!DOCTYPE html>
             <html>
-            <head><meta charset='utf-8'><title>Download Source 互传</title>
-            <style>body{font-family:sans-serif;padding:20px;background:#f0f0f0;} a{color:#007bff;text-decoration:none;} li{margin:10px 0;}</style>
+            <head><meta charset='utf-8'><title>Download Source 互传 (★ ω ★)</title>
+            <style>
+                body { font-family: sans-serif; padding: 20px; background: #f9f9f9; color: #333; }
+                a { color: #007bff; text-decoration: none; font-weight: bold; }
+                li { margin: 10px 0; list-style: none; background: #fff; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                span { color: #666; font-size: 12px; margin-left: 10px; }
+                h2 { color: #333; }
+                .upload-box { margin-top: 20px; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            </style>
             </head>
             <body>
-                <h2>Download Source 局域网互传</h2>
-                <p>手机端文件列表：</p>
+                <h2>Download Source 局域网互传 (๑•̀ㅂ•́)و✧</h2>
                 <ul>$listHtml</ul>
                 <hr>
-                <h3>上传文件到手机</h3>
-                <form method='POST' action='/upload' enctype='multipart/form-data'>
-                    <input type='file' name='file'>
-                    <input type='submit' value='上传'>
-                </form>
+                <div class='upload-box'>
+                    <h3>上传文件到手机</h3>
+                    <form method='POST' action='/upload' enctype='multipart/form-data'>
+                        <input type='file' name='file'>
+                        <input type='submit' value='上传 (●\x27◡\x27●)'>
+                    </form>
+                </div>
             </body>
             </html>
         """.trimIndent()
