@@ -40,7 +40,6 @@ fun SourceScreen() {
     var enabledList by remember { mutableStateOf(MirrorResolver.load(ctx)) }
     var inputUrl by remember { mutableStateOf("") }
 
-    // 修复：合并常量源和用户自定义源，并将勾选的置顶
     val allSources = (MirrorResolver.AVAILABLE_MIRRORS + enabledList).distinct()
     val sortedMirrors = allSources.sortedByDescending { enabledList.contains(it) }
 
@@ -49,7 +48,6 @@ fun SourceScreen() {
         Text("勾选启用的镜像源（已勾选优先排列）", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(16.dp))
 
-        // 自定义添加框
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = inputUrl,
@@ -84,7 +82,8 @@ fun SourceScreen() {
                 Row(
                     Modifier.fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (isChecked) palette.primary.copy(alpha = 0.15f) else palette.surface)
+                        // 修复：使用 primary.first().copy
+                        .background(if (isChecked) palette.primary.first().copy(alpha = 0.15f) else palette.surface)
                         .clickable {
                             enabledList = if (isChecked) enabledList - mirror else enabledList + mirror
                             MirrorResolver.save(ctx, enabledList)
@@ -101,7 +100,6 @@ fun SourceScreen() {
                         maxLines = 1,
                         fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
                     )
-                    // 对于用户自定义的源（不在官方列表里的），允许删除
                     if (!MirrorResolver.AVAILABLE_MIRRORS.contains(mirror) && mirror.isNotBlank()) {
                         IconButton(onClick = {
                             enabledList = enabledList - mirror
