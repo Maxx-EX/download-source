@@ -98,10 +98,11 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
 
-    // 桌面小组件
-    implementation("androidx.appwidget:appwidget:1.0.0")
+    // 桌面小组件 (Glance)
+    implementation("androidx.glance:glance:1.1.0")
+    implementation("androidx.glance:glance-appwidget:1.1.0")
 
-    // 媒体库 (去掉重复依赖)
+    // 媒体库
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
