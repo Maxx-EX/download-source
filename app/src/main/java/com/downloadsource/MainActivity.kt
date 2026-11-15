@@ -13,6 +13,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,11 +35,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle // 修复：补全导入
 import com.downloadsource.core.DownloadManager
+import com.downloadsource.core.DownloadTask // 修复：补全导入
 import com.downloadsource.core.UpdateManager
 import com.downloadsource.ui.*
-import java.io.File
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -45,7 +51,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             var isLocked by remember { mutableStateOf(false) }
             LifecycleResumeEffect(Unit) {
-                if (ThemeStore.getLockPassword(this@MainActivity) != null) isLocked = true
+                if (ThemeStore.getLockPassword(this@MainActivity) != null) {
+                    isLocked = true
+                }
                 onPauseOrDispose {}
             }
 
@@ -55,8 +63,91 @@ class MainActivity : ComponentActivity() {
             }
 
             val palette = rememberPalette()
+            var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
+
+            if (updateInfo != null) {
+                val ctx = LocalContext.current
+                AlertDialog(
+                    onDismissRequest = { updateInfo = null },
+                    title = { Text("发现新版本 v${updateInfo?.version} 🎉") },
+                    text = { Text(updateInfo?.changelog ?: "优化了下载体验。") },
+                    confirmButton = { TextButton(onClick = { UpdateManager.openDownload(ctx, updateInfo?.downloadUrl ?: ""); updateInfo = null }) { Text("去下载") } },
+                    dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("稍后") } }
+                )
+            }
+
             GradientBackground(palette) {
-                MaterialTheme { MainScaffold() }
+                MaterialTheme(typography = SafeTypography) { MainScaffold() }
+            }
+        }
+    }
+}
+
+// 修复：恢复安全键盘
+@Composable
+fun SecureLockScreen(onUnlock: () -> Unit) {
+    val ctx = LocalContext.current
+    val palette = LocalPalette.current
+    var inputPwd by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf("") }
+    
+    val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
+
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = palette.primary.first())
+        Spacer(Modifier.height(16.dp))
+        Text("安全验证", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
+        
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            repeat(inputPwd.length.coerceAtMost(8)) {
+                Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first()))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(errorMsg, color = Color.Red, fontSize = 14.sp)
+
+        Spacer(Modifier.height(32.dp))
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(6),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().height(300.dp)
+        ) {
+            items(keys) { key ->
+                Box(
+                    Modifier
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(palette.surface)
+                        .clickable {
+                            errorMsg = ""
+                            if (key == "DEL") {
+                                if (inputPwd.isNotEmpty()) inputPwd = inputPwd.dropLast(1)
+                            } else {
+                                if (inputPwd.length < 8) inputPwd += key
+                            }
+                            
+                            if (inputPwd.length >= 4) {
+                                if (ThemeStore.verifyLockPassword(ctx, inputPwd)) {
+                                    onUnlock()
+                                } else if (inputPwd.length == 8) {
+                                    errorMsg = "密码错误"
+                                    inputPwd = ""
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface)
+                    else Text(key, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = palette.onSurface)
+                }
             }
         }
     }
@@ -110,7 +201,7 @@ fun MainScaffold() {
             }
         }
         
-        // 悬浮球 (缩小尺寸，半透明防遮挡)
+        // 悬浮球
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -121,7 +212,6 @@ fun MainScaffold() {
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                 .size(ballSize)
-                // 使用半透明防止完全遮挡网页内容
                 .alpha(if (showMenu) 1f else 0.7f)
                 .pointerInput(Unit) {
                     detectDragGestures(
@@ -155,23 +245,52 @@ fun MainScaffold() {
     }
 }
 
+// 修复：恢复完整的 DownloadScreen 和任务状态
 @Composable
 fun DownloadScreen() {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
-    
+    val tasks by DownloadManager.tasks.collectAsStateWithLifecycle() // 现在已导入
+    var showAddDialog by remember { mutableStateOf(false) }
+    var prefillUrl by remember { mutableStateOf("") }
+    var dirPath by remember { mutableStateOf(com.downloadsource.storage.DirStore.resolveDownloadDir(ctx).absolutePath) }
+    val scope = rememberCoroutineScope()
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
-            Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
-            Text("v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(16.dp))
-            
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(tasks, key = { it.id }) { task ->
-                    DownloadCard(task = task, onPause = { }, onResume = { }, onDelete = { }, onOpen = { })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                    Text("v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
             }
+            Spacer(Modifier.height(16.dp))
+            
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
+                items(tasks, key = { it.id }) { task ->
+                    DownloadCard(
+                        task = task, 
+                        onPause = { DownloadManager.pause(ctx, task.id) }, 
+                        onResume = { DownloadManager.start(ctx, task.id) }, 
+                        onDelete = { DownloadManager.remove(ctx, task.id) },
+                        onOpen = { }
+                    )
+                }
+            }
+        }
+
+        FloatingActionButton(
+            onClick = { showAddDialog = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            containerColor = palette.primary.first(),
+            shape = CircleShape
+        ) { Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White) }
+    }
+
+    if (showAddDialog) {
+        AddTaskDialog(initialUrl = prefillUrl, onDismiss = { showAddDialog = false }) { url, name, threads, speed, headers ->
+            DownloadManager.add(ctx, url, name, threads, speed, headers, java.io.File(dirPath))
+            showAddDialog = false
         }
     }
 }
