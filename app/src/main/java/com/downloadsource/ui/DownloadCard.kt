@@ -59,25 +59,24 @@ fun DownloadCard(
     Box {
         Row(
             modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .background(palette.surface)
-                .border(1.dp, palette.onSurface.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                .border(1.dp, palette.onSurface.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
                 .combinedClickable(
                     onClick = { if (task.status == TaskStatus.Completed) onOpen() },
                     onLongClick = { showSheet = true }
                 )
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ProgressRing(animatedProgress, task.status == TaskStatus.Running, task.status == TaskStatus.Completed, palette.primary)
             Spacer(Modifier.width(16.dp))
             
             Column(Modifier.weight(1f)) {
-                Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                Text(task.fileName, color = palette.onSurface, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
                 Spacer(Modifier.height(4.dp))
                 
                 val speedStr = if (animatedSpeed > 0) String.format("%.1f KB/s", animatedSpeed / 1024) else ""
-                // 修复：拦截底层的 canceled 报错，转为友好的中文提示
                 val displayError = when {
                     task.error == null -> ""
                     task.error!!.contains("canceled", true) || task.error!!.contains("cancelled", true) -> "任务已取消"
@@ -86,7 +85,7 @@ fun DownloadCard(
                 
                 Text(
                     when (task.status) {
-                        TaskStatus.Failed -> "失败：$displayError"
+                        TaskStatus.Failed -> "失败: $displayError"
                         TaskStatus.Completed -> "已完成"
                         TaskStatus.Paused -> "已暂停 · ${task.sizeText}"
                         else -> "${task.sizeText} ${if (speedStr.isNotEmpty()) "· $speedStr" else ""}"
@@ -96,7 +95,9 @@ fun DownloadCard(
                 )
             }
             
-            // 修复：按钮独立排布，增加间距，防止重叠
+            Spacer(Modifier.width(12.dp))
+            
+            // UI 重构：按钮间距拉大，尺寸微调
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -104,16 +105,16 @@ fun DownloadCard(
                 if (task.status != TaskStatus.Completed) {
                     IconButton(
                         onClick = { if (task.status == TaskStatus.Running) onPause() else onResume() },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(36.dp).background(palette.onSurface.copy(alpha = 0.05f), androidx.compose.foundation.shape.CircleShape)
                     ) {
-                        Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onSurface)
+                        Icon(if (task.status == TaskStatus.Running) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.primary.first(), modifier = Modifier.size(20.dp))
                     }
                 }
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(36.dp).background(palette.onSurface.copy(alpha = 0.05f), androidx.compose.foundation.shape.CircleShape)
                 ) {
-                    Icon(Icons.Default.Delete, null, tint = palette.onSurfaceDim)
+                    Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -169,7 +170,7 @@ private fun ProgressRing(progress: Float, running: Boolean, completed: Boolean, 
     val transition = rememberInfiniteTransition(label = "ring")
     val rotation by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "spin")
     Canvas(Modifier.size(48.dp)) {
-        val stroke = 4.dp.toPx(); val inset = stroke / 2
+        val stroke = 5.dp.toPx(); val inset = stroke / 2
         val arcSize = Size(size.width - stroke, size.height - stroke)
         val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
         drawArc(Color.White.copy(alpha = 0.2f), 0f, 360f, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))

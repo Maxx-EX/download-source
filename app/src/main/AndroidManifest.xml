@@ -36,6 +36,7 @@
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         
+        <activity android:name=".ui.TampermonkeyActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".ui.NetDiskActivity" android:exported="false" />
         <activity android:name=".ui.SourceManageActivity" android:exported="false" />

@@ -2,8 +2,6 @@ package com.downloadsource.core
 
 import android.app.AlertDialog
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import com.downloadsource.BuildConfig
 import com.downloadsource.ThemeStore
 import com.downloadsource.storage.DirStore
@@ -12,7 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.File
 
 object UpdateManager {
     private const val REPO = "Maxx-EX/download-source"
@@ -20,9 +17,9 @@ object UpdateManager {
 
     data class ReleaseInfo(val version: String, val downloadUrl: String, val changelog: String, val isZeta: Boolean)
 
-    // 修复：传入的 currentVersion 必须去掉后缀，如 6.0.7-zeta 变为 6.0.7
     suspend fun checkUpdate(rawCurrentVersion: String): ReleaseInfo? = withContext(Dispatchers.IO) {
         try {
+            // 强制剥离 -zeta, -omega 等后缀，只比对数字
             val currentVersion = rawCurrentVersion.substringBefore("-").trim()
             val req = Request.Builder()
                 .url("https://api.github.com/repos/$REPO/releases?per_page=100")
@@ -61,9 +58,7 @@ object UpdateManager {
                 }
                 return@withContext bestRelease
             }
-        } catch (e: Exception) { 
-            null 
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun isVersionNewer(remote: String, local: String): Boolean {
@@ -83,15 +78,11 @@ object UpdateManager {
     fun showUpdateDialog(ctx: Context, info: ReleaseInfo) {
         if (ThemeStore.getIgnoreVersion(ctx) == info.version) return
         val channelText = if (info.isZeta) "内测版 (Zeta)" else "正式版 (Omega)"
-        val title = "发现新$channelText v${info.version} 🎉"
-        val content = "【当前通道：$channelText】\n\n${info.changelog}"
-
         AlertDialog.Builder(ctx)
-            .setTitle(title)
-            .setMessage(content)
+            .setTitle("发现新$channelText v${info.version} 🎉")
+            .setMessage("【当前通道：$channelText】\n\n${info.changelog}")
             .setPositiveButton("立即更新") { _, _ -> 
                 DownloadManager.add(ctx, info.downloadUrl, "DownloadSource_Update_v${info.version}.apk", 8, 0, emptyMap(), DirStore.resolveDownloadDir(ctx))
-                android.widget.Toast.makeText(ctx, "已加入下载队列，完成后自动弹出安装", android.widget.Toast.LENGTH_LONG).show()
             }
             .setNeutralButton("忽略此版本") { _, _ -> ThemeStore.setIgnoreVersion(ctx, info.version) }
             .setNegativeButton("稍后", null).show()

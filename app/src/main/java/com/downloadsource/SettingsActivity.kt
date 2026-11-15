@@ -76,7 +76,6 @@ fun SettingsScreen(onClose: () -> Unit) {
     var showPoem by remember { mutableStateOf(false) }
     var poemText by remember { mutableStateOf("") }
     var showAria2Dialog by remember { mutableStateOf(false) }
-    var showTmDialog by remember { mutableStateOf(false) }
     var showDonate by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
@@ -90,11 +89,13 @@ fun SettingsScreen(onClose: () -> Unit) {
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             
+            // 1. 更新
             SettingsGroup {
                 SettingsRow("检查更新", if (checking) "检测中..." else "检查最新版", Icons.Default.Update) {
                     if (!checking) { 
                         checking = true; 
                         scope.launch { 
+                            // 强制剥离后缀
                             val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME.substringBefore("-"))
                             checking = false; 
                             if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版", Toast.LENGTH_SHORT).show() 
@@ -103,6 +104,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
+            // 2. 外观与引擎
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("主题风格", color = palette.onSurface, modifier = Modifier.weight(1f))
@@ -138,12 +140,18 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
+            // 3. 极客功能
             SettingsGroup {
-                SettingsRow("Aria2 远程下载", Aria2Manager.getServer(ctx).ifBlank { "未配置" }, Icons.Default.Router) { showAria2Dialog = true }
+                // 修复：补全镜像源管理入口
+                SettingsRow("镜像源管理", "自定义加速节点", Icons.Default.Link) { ctx.startActivity(Intent(ctx, SourceManageActivity::class.java)) }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
-                SettingsRow("油猴脚本 (Tampermonkey)", "注入自定义 JS", Icons.Default.Code) { showTmDialog = true }
+                // 修复：独立油猴脚本管理页面
+                SettingsRow("油猴脚本", "注入自定义 JS", Icons.Default.Code) { ctx.startActivity(Intent(ctx, TampermonkeyActivity::class.java)) }
+                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
+                SettingsRow("Aria2 远程下载", Aria2Manager.getServer(ctx).ifBlank { "未配置" }, Icons.Default.Router) { showAria2Dialog = true }
             }
 
+            // 4. 安全与保护
             SettingsGroup {
                 SettingsRow("应用锁 (15分钟免密)", if (currentLock != null) "已开启" else "未开启", Icons.Default.Lock) { showPwdDialog = true }
                 HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
@@ -152,6 +160,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
             }
 
+            // 5. 工具
             SettingsGroup {
                 SettingsRow("局域网互传", serverIp, Icons.Default.Wifi) {
                     if (LocalWebServer.isRunning) {
@@ -167,18 +176,14 @@ fun SettingsScreen(onClose: () -> Unit) {
                     dir.listFiles()?.filter { it.name.startsWith(".") && it.isDirectory }?.forEach { it.deleteRecursively(); count++ }
                     Toast.makeText(ctx, "已清理 $count 个缓存", Toast.LENGTH_SHORT).show()
                 }
-                HorizontalDivider(color = palette.onSurface.copy(alpha = 0.1f))
-                SettingsRow("清空下载记录", "不删除本地文件", Icons.Default.Delete) {
-                    DownloadManager.tasks.value.forEach { DownloadManager.remove(ctx, it.id) }
-                    Toast.makeText(ctx, "记录已清空", Toast.LENGTH_SHORT).show()
-                }
             }
             
+            // 6. 关于
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().clickable { 
                     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Maxx-EX/download-source"))) 
                 }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Info, null, tint = palette.onSurface)
+                    Image(painter = painterResource(id = R.drawable.ic_github), contentDescription = "GitHub", modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("GitHub 仓库", color = palette.onSurface, fontWeight = FontWeight.Medium)
@@ -196,12 +201,7 @@ fun SettingsScreen(onClose: () -> Unit) {
 
     // 弹窗区域
     if (showPoem) {
-        AlertDialog(
-            onDismissRequest = { showPoem = false },
-            title = { Text("发现隐藏内容 🎉") },
-            text = { Text(poemText, style = MaterialTheme.typography.bodyLarge) },
-            confirmButton = { TextButton(onClick = { showPoem = false }) { Text("好诗") } }
-        )
+        AlertDialog(onDismissRequest = { showPoem = false }, title = { Text("发现隐藏内容 🎉") }, text = { Text(poemText) }, confirmButton = { TextButton(onClick = { showPoem = false }) { Text("好诗") } })
     }
     
     if (showAria2Dialog) {
@@ -211,16 +211,6 @@ fun SettingsScreen(onClose: () -> Unit) {
             title = { Text("配置 Aria2 RPC") },
             text = { OutlinedTextField(value = inputUrl, onValueChange = { inputUrl = it }, placeholder = { Text("http://192.168.1.100:6800/jsonrpc") }) },
             confirmButton = { TextButton(onClick = { Aria2Manager.setServer(ctx, inputUrl); showAria2Dialog = false }) { Text("保存") } }
-        )
-    }
-    
-    if (showTmDialog) {
-        var inputJs by remember { mutableStateOf(ctx.getSharedPreferences("tampermonkey", Context.MODE_PRIVATE).getString("js", "") ?: "") }
-        AlertDialog(
-            onDismissRequest = { showTmDialog = false },
-            title = { Text("输入 Tampermonkey JS") },
-            text = { OutlinedTextField(value = inputJs, onValueChange = { inputJs = it }, minLines = 5) },
-            confirmButton = { TextButton(onClick = { ctx.getSharedPreferences("tampermonkey", Context.MODE_PRIVATE).edit().putString("js", inputJs).apply(); showTmDialog = false }) { Text("保存并应用") } }
         )
     }
 
@@ -249,7 +239,6 @@ fun SettingsScreen(onClose: () -> Unit) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("感谢赞助 (๑•̀ㅂ•́)و✧", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
                 Spacer(Modifier.height(16.dp))
-                // 请确保 res/drawable 里有 donate_qr.png
                 Image(painter = painterResource(id = R.drawable.donate_qr), contentDescription = "QR", contentScale = ContentScale.Fit, modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { showDonate = false }, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
