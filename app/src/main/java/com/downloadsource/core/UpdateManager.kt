@@ -6,11 +6,13 @@ import android.content.Intent
 import android.net.Uri
 import com.downloadsource.BuildConfig
 import com.downloadsource.ThemeStore
+import com.downloadsource.storage.DirStore
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 
 object UpdateManager {
     private const val REPO = "Maxx-EX/download-source"
@@ -50,7 +52,6 @@ object UpdateManager {
                         name.contains(targetName, true) && name.endsWith(".apk") 
                     }?.asJsonObject?.get("browser_download_url")?.asString
 
-                    // 核心逻辑：只要比当前记录的 maxVersion 更大，就更新它
                     if (!apkUrl.isNullOrBlank() && isVersionNewer(remoteVersionName, maxVersion)) {
                         maxVersion = remoteVersionName
                         bestRelease = ReleaseInfo(remoteVersionName, apkUrl, body, isZetaChannel)
@@ -86,14 +87,20 @@ object UpdateManager {
         AlertDialog.Builder(ctx)
             .setTitle(title)
             .setMessage(content)
-            .setPositiveButton("立即下载") { _, _ -> openDownload(ctx, info.downloadUrl) }
+            .setPositiveButton("后台极速下载") { _, _ -> 
+                // 核心升级：直接调用内置下载器
+                DownloadManager.add(
+                    context = ctx,
+                    url = info.downloadUrl,
+                    customName = "DownloadSource_Update_v${info.version}.apk",
+                    threads = 8,
+                    speedLimitKb = 0,
+                    headers = emptyMap(),
+                    baseDir = DirStore.resolveDownloadDir(ctx)
+                )
+                android.widget.Toast.makeText(ctx, "已加入下载队列，下载完成后会自动弹出安装", android.widget.Toast.LENGTH_LONG).show()
+            }
             .setNeutralButton("忽略此版本") { _, _ -> ThemeStore.setIgnoreVersion(ctx, info.version) }
-            .setNegativeButton("稍后", null).show()
-    }
-
-    fun openDownload(ctx: Context, url: String) {
-        if (url.isNotEmpty()) ctx.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+            .setNegativeButton("取消", null).show()
     }
 }

@@ -11,7 +11,6 @@ object ThemeStore {
     private const val PREF = "theme_store"
     private const val KEY_MODE = "mode"
     private const val KEY_STYLE = "style"
-    private const val KEY_GLASS = "glass_type"
     private const val KEY_IGNORE_VER = "ignore_version"
     private const val KEY_LOCK_PWD_HASH = "lock_pwd_hash"
 
@@ -21,9 +20,6 @@ object ThemeStore {
     fun getThemeStyle(context: Context): Int = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getInt(KEY_STYLE, 0)
     fun setThemeStyle(context: Context, value: Int) { context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putInt(KEY_STYLE, value).apply() }
 
-    fun getGlassType(context: Context): Int = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getInt(KEY_GLASS, 2)
-    fun setGlassType(context: Context, value: Int) { context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putInt(KEY_GLASS, value).apply() }
-
     fun getIgnoreVersion(context: Context): String? = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY_IGNORE_VER, null)
     fun setIgnoreVersion(context: Context, version: String) { context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY_IGNORE_VER, version).apply() }
 
@@ -32,7 +28,5 @@ object ThemeStore {
         val hash = if (password != null) PasswordCrypto.hashPassword(password) else null
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY_LOCK_PWD_HASH, hash).apply()
     }
-    fun verifyLockPassword(context: Context, input: String): Boolean {
-        return PasswordCrypto.verifyPassword(input, getLockPassword(context))
-    }
+    fun verifyLockPassword(context: Context, input: String): Boolean = PasswordCrypto.verifyPassword(input, getLockPassword(context))
 }

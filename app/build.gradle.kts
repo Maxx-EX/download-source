@@ -11,7 +11,7 @@ plugins {
 val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
 val localVersionCode = (System.currentTimeMillis() / 60000).toInt()
 val injectedVersionCode = ciRunNumber ?: localVersionCode
-val injectedVersionName = System.getenv("VERSION_NAME") ?: "5.3.1"
+val injectedVersionName = System.getenv("VERSION_NAME") ?: "5.8.1"
 val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
 
 android {
@@ -93,7 +93,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
     
-    // 方向四：Room 数据库
+    // Room 数据库
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")

@@ -1,20 +1,14 @@
 package com.downloadsource.utils
-
 import android.content.Context
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.regex.Pattern
-
 object PyRuleEngine {
     private val mediaPatterns = mutableListOf<Pattern>()
     private val adPatterns = mutableListOf<Pattern>()
-
     fun init(context: Context) {
         try {
             val inputStream = context.assets.open("sniffer_engine.py")
-            val reader = BufferedReader(InputStreamReader(inputStream))
-            var line: String?
-            var mode = 0 // 1: Media, 2: Ad
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(inputStream))
+            var line: String?; var mode = 0
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
                 if (l.startsWith("MEDIA_PATTERNS")) mode = 1
@@ -27,9 +21,8 @@ object PyRuleEngine {
                 }
             }
             reader.close()
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) { }
     }
-
     fun shouldBlock(url: String): Boolean = adPatterns.any { it.matcher(url).matches() }
     fun shouldSniff(url: String): Boolean = mediaPatterns.any { it.matcher(url).matches() }
 }

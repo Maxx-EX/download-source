@@ -1,5 +1,4 @@
 package com.downloadsource.core
-
 import android.content.Context
 import android.media.MediaScannerConnection
 import com.downloadsource.BuildConfig
@@ -15,11 +14,7 @@ import java.io.File
 import java.net.URLDecoder
 
 object DownloadManager {
-    val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .build()
-
+    val httpClient = OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
@@ -38,54 +33,33 @@ object DownloadManager {
     }
 
     fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, baseDir: File) {
-        val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
+        val tempName = customName ?: "parsing_${System.currentTimeMillis()}"
         val task = DownloadTask(url = url, fileName = tempName, dirPath = baseDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
-        
         scope.launch {
             mutex.withLock { _tasks.value = _tasks.value + task }
             TaskStore.save(context, _tasks.value)
-            
             try {
                 val shareInfo = NetDiskParser.detect(url)
                 if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
                     if (BuildConfig.CHANNEL == "zeta") {
                         val results = DiskParser.parse(context, shareInfo)
-                        remove(context, task.id) // 移除解析中的占位任务
-                        
+                        remove(context, task.id)
                         for (file in results) {
-                            val catDir = createCategoryDir(baseDir, file.name) // 真实文件名分类
+                            val catDir = createCategoryDir(baseDir, file.name)
                             val newTask = DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
                             mutex.withLock { _tasks.value = _tasks.value + newTask }
                             TaskStore.save(context, _tasks.value)
                             startTask(context, newTask.id)
                         }
-                    } else {
-                        throw Exception("网盘解析为内测功能，请下载 Zeta 版体验")
-                    }
+                    } else throw Exception("网盘解析为内测功能")
                     return@launch
                 }
-                
                 var parsedUrl = MirrorResolver.resolveFastest(context, url)
-                if (parsedUrl.startsWith("data:")) {
-                    val mime = parsedUrl.substringAfter("data:").substringBefore(";")
-                    val ext = mimeToExtension(mime)
-                    val name = if (customName.isNullOrBlank()) "blob_${System.currentTimeMillis()}$ext" else customName
-                    val catDir = createCategoryDir(baseDir, name)
-                    updateTaskState(context, task.id) { it.copy(url = parsedUrl, fileName = name, dirPath = catDir.absolutePath) }
-                    startTask(context, task.id)
-                    return@launch
-                }
-
-                val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
+                val realName = if (customName == null) probeRealFileName(parsedUrl, headers) else customName
                 val catDir = createCategoryDir(baseDir, realName)
                 updateTaskState(context, task.id) { it.copy(url = parsedUrl, fileName = realName, dirPath = catDir.absolutePath) }
                 startTask(context, task.id)
-            } catch (e: Exception) {
-                updateTaskState(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "任务添加失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                }
-            }
+            } catch (e: Exception) { updateTaskState(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message) } }
         }
     }
 
@@ -93,147 +67,39 @@ object DownloadManager {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val sub = when (ext) {
             "mp4", "mkv", "avi", "mov", "ts" -> "视频"
-            "mp3", "flac", "wav", "m4a" -> "音频"
+            "mp3", "flac", "wav" -> "音频"
             "apk" -> "安装包"
-            "jpg", "png", "gif", "webp" -> "图片"
-            "pdf", "doc", "docx", "xls", "xlsx", "txt" -> "文档"
             else -> "其他"
         }
-        val dir = File(baseDir, sub)
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+        return File(baseDir, sub).apply { if (!exists()) mkdirs() }
     }
 
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
-
     private fun startTask(context: Context, id: String) {
-        val runningCount = _tasks.value.count { it.status == TaskStatus.Running }
-        if (runningCount >= MAX_CONCURRENT) { updateTaskState(context, id) { it.copy(status = TaskStatus.Pending) }; return }
-
+        if (_tasks.value.count { it.status == TaskStatus.Running } >= MAX_CONCURRENT) { updateTaskState(context, id) { it.copy(status = TaskStatus.Pending) }; return }
         val t = _tasks.value.find { it.id == id } ?: return
         if (t.status == TaskStatus.Running) return
         updateTaskState(context, id) { it.copy(status = TaskStatus.Running, error = null) }
         DownloadService.start(context)
-
         jobs[id] = scope.launch {
             try {
-                val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
-                val out = segmenter.download(t.id, t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
-                    // 修复：仅仅在内存中更新进度，不每秒都去写数据库！
-                    _tasks.value = _tasks.value.map { if (it.id == id) it.copy(downloadedBytes = d, totalBytes = total, speed = speed) else it }
-                    DownloadService.updateProgress(context, t.fileName, d, total, speed)
-                }
+                val out = segmenter.download(t.id, t.url, File(t.dirPath), t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed -> _tasks.value = _tasks.value.map { if (it.id == id) it.copy(downloadedBytes = d, totalBytes = total, speed = speed) else it } }
                 updateTaskState(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
-                
-                try {
-                    val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE)) else @Suppress("DEPRECATION") vibrator.vibrate(200)
-                } catch (e: Exception) { }
-
-                if (out.name.endsWith(".apk", true)) installApk(context, out) else MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
-                checkPending(context)
-            } catch (e: CancellationException) {
-                segmenter.cancelTask(t.id)
-                updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
-                throw e
-            } catch (e: Exception) {
-                updateTaskState(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "未知错误", speed = 0) }
-                checkPending(context)
-            }
-        }
-    }
-    
-    private fun installApk(context: Context, file: File) {
-        try {
-            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-        } catch (e: Exception) {}
-    }
-
-    private fun checkPending(context: Context) {
-        if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context)
-        else {
-            val next = _tasks.value.firstOrNull { it.status == TaskStatus.Pending }
-            if (next != null) startTask(context, next.id)
-        }
-    }
-
-    fun pause(context: Context, id: String) {
-        segmenter.cancelTask(id)
-        jobs[id]?.cancel(); jobs.remove(id)
-        updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
-        checkPending(context)
-    }
-
-    fun pauseAll(context: Context) { _tasks.value.filter { it.status == TaskStatus.Running }.forEach { pause(context, it.id) } }
-    fun resumeAll(context: Context) { autoResumeTasks(context) }
-
-    fun autoResumeTasks(context: Context) {
-        _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
-    }
-
-    fun rename(context: Context, id: String, newName: String) {
-        val t = _tasks.value.find { it.id == id } ?: return
-        val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)
-        if (oldFile.exists()) oldFile.renameTo(newFile)
-        updateTaskState(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
-    }
-
-    fun remove(context: Context, id: String) {
-        segmenter.cancelTask(id)
-        jobs[id]?.cancel(); jobs.remove(id)
-        _tasks.value = _tasks.value.filterNot { it.id == id }
-        TaskStore.save(context, _tasks.value)
-        checkPending(context)
-    }
-
-    // 修复：仅在状态变更时调用此方法持久化
-    private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) {
-        _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }
-        TaskStore.save(context, _tasks.value)
-    }
-
-    private fun probeRealFileName(url: String, headers: Map<String, String>): String {
-        try {
-            if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
-            val builder = Request.Builder().url(url).head()
-            headers.forEach { (k, v) -> builder.header(k, v) }
-            httpClient.newCall(builder.build()).execute().use { resp ->
-                val disposition = resp.header("Content-Disposition")
-                if (disposition != null && disposition.contains("filename=")) {
-                    var name = disposition.substringAfter("filename=").trim('"', ' ')
-                    if (name.contains("''")) name = name.substringAfter("''")
-                    return URLDecoder.decode(name, "UTF-8")
+                if (out.name.endsWith(".apk", true)) {
+                    try {
+                        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", out)
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK) })
+                    } catch (e: Exception) {}
                 }
-                val path = resp.request.url.encodedPath
-                var last = path.substringAfterLast('/')
-                if (last.isNotBlank() && last.contains('.')) return URLDecoder.decode(last, "UTF-8")
-                
-                val mime = resp.header("Content-Type") ?: ""
-                val ext = mimeToExtension(mime)
-                
-                if (last.isBlank()) last = "download_${System.currentTimeMillis()}"
-                return "$last$ext"
-            }
-        } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
-    }
-
-    private fun mimeToExtension(mime: String): String {
-        return when {
-            mime.contains("video/mp4") -> ".mp4"
-            mime.contains("video/quicktime") -> ".mov"
-            mime.contains("video/x-matroska") -> ".mkv"
-            mime.contains("audio/mpeg") -> ".mp3"
-            mime.contains("application/vnd.android.package-archive") -> ".apk"
-            mime.contains("application/pdf") -> ".pdf"
-            mime.contains("image/jpeg") -> ".jpg"
-            mime.contains("image/png") -> ".png"
-            mime.contains("application/zip") -> ".zip"
-            else -> ".bin"
+                checkPending(context)
+            } catch (e: Exception) { updateTaskState(context, id) { it.copy(status = TaskStatus.Failed, error = e.message) }; checkPending(context) }
         }
     }
+
+    fun pause(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) } }
+    fun remove(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); _tasks.value = _tasks.value.filterNot { it.id == id }; TaskStore.save(context, _tasks.value) }
+    private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }; TaskStore.save(context, _tasks.value) }
+    private fun checkPending(context: Context) { if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } }
+    
+    private fun probeRealFileName(url: String, headers: Map<String, String>): String { return "file_${System.currentTimeMillis()}.bin" }
 }
