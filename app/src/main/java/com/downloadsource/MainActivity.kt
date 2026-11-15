@@ -15,6 +15,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -65,6 +67,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val palette = rememberPalette()
+            var isLocked by remember { mutableStateOf(ThemeStore.getLockPassword(this@MainActivity) != null) }
+            
+            if (isLocked) {
+                LockScreen(onUnlock = { isLocked = false })
+                return@setContent
+            }
+
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
             LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
 
@@ -96,6 +105,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun LockScreen(onUnlock: () -> Unit) {
+    val ctx = LocalContext.current
+    var pwd by remember { mutableStateOf("") }
+    val correct = ThemeStore.getLockPassword(ctx)
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = LocalPalette.current.primary.first())
+        Spacer(Modifier.height(16.dp))
+        Text("应用已锁定", style = MaterialTheme.typography.titleLarge, color = LocalPalette.current.onSurface)
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(
+            value = pwd, onValueChange = { pwd = it }, label = { Text("请输入密码") },
+            visualTransformation = PasswordVisualTransformation(), singleLine = true,
+            keyboardActions = KeyboardActions(onDone = { if (pwd == correct) onUnlock() })
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = { if (pwd == correct) onUnlock() else android.widget.Toast.makeText(ctx, "密码错误", android.widget.Toast.LENGTH_SHORT).show() }) { Text("解锁") }
     }
 }
 
@@ -149,6 +178,7 @@ fun MainScaffold(
             }
         }
         
+        // 悬浮球逻辑
         var offsetX by remember { mutableFloatStateOf((screenWidth.value / 2) - 100f) }
         var offsetY by remember { mutableFloatStateOf(screenHeight.value - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -183,8 +213,7 @@ fun MainScaffold(
                 .background(if (isHoveringBottomBar) LocalPalette.current.primary.first() else LocalPalette.current.primary.first().copy(alpha = 0.85f))
                 .combinedClickable(
                     onClick = { showMenu = !showMenu },
-                    onLongClick = { showMenu = true },
-                    onDoubleClick = { offsetX = -1000f; offsetY = -1000f }
+                    onLongClick = { showMenu = true }
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -221,6 +250,14 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     
     var filterMode by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "下载中", "已完成", "失败")
+
+    // 方向三：快捷导航 (预设图标)
+    val shortcuts = listOf(
+        Pair("哔哩哔哩", "https://m.bilibili.com"),
+        Pair("知乎", "https://www.zhihu.com"),
+        Pair("GitHub", "https://github.com"),
+        Pair("百度", "https://www.baidu.com")
+    )
 
     LifecycleResumeEffect(Unit) { dirPath = DirStore.resolveDownloadDir(ctx).absolutePath; onPauseOrDispose {} }
 
@@ -278,6 +315,24 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
                 )
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { doSearch() }) { Icon(Icons.Default.ArrowForward, null, tint = palette.primary.first()) }
+                }
+            }
+            
+            Spacer(Modifier.height(16.dp))
+            
+            // 快捷导航展示
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(shortcuts) { item ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
+                        // 这里应该跳转内置浏览器，为了简单暂用外部
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.second)))
+                    }) {
+                        Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                            Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(item.first, style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
+                    }
                 }
             }
             

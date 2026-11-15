@@ -65,10 +65,7 @@ fun BrowserScreen(
     var urlInput by remember { mutableStateOf(currentUrl) }
     var sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
     
-    // 大功能：全屏与夜间模式
-    var isFullScreen by remember { mutableStateOf(false) }
-    var isNightMode by remember { mutableStateOf(false) }
-
+    var isReadingMode by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
     var pendingFileName by remember { mutableStateOf<String?>(null) }
@@ -110,26 +107,24 @@ fun BrowserScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            if (!isFullScreen) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { 
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) 
-                    }
-                    IconButton(onClick = { webView?.goForward() }, enabled = webView?.canGoForward() == true) { 
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) 
-                    }
-                    Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        BasicTextField(
-                            value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
-                            cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                            decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
-                    IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { 
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) 
                 }
+                IconButton(onClick = { webView?.goForward() }, enabled = webView?.canGoForward() == true) { 
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) 
+                }
+                Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    BasicTextField(
+                        value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
+                        cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
+                        decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
+                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
             }
 
             AndroidView(
@@ -138,7 +133,6 @@ fun BrowserScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        // 修复部分网站打不开：允许混合内容，伪装 UA
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -151,6 +145,10 @@ fun BrowserScreen(
                         ) {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                                 val url = request.url.toString()
+                                // 方向二：基础广告拦截拦截
+                                if (url.contains("doubleclick.net") || url.contains("googlesyndication") || url.contains("cpro.baidu.com")) {
+                                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                                }
                                 if (url.contains("captcha") || url.contains("verify")) return null
                                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
                                 if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
@@ -167,7 +165,7 @@ fun BrowserScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 view?.evaluateJavascript(webInterceptor.injectionScript, null)
-                                if (isNightMode) injectNightMode(view)
+                                if (isReadingMode) injectReaderMode(view)
                             }
                         }
                         setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true }
@@ -191,13 +189,26 @@ fun BrowserScreen(
     if (showMenuSheet) {
         ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
             Column(Modifier.padding(16.dp)) {
-                BrowserMenuItem(if (isFullScreen) "退出全屏沉浸" else "全屏沉浸模式", Icons.Default.Fullscreen, palette.onSurface) { 
-                    isFullScreen = !isFullScreen; showMenuSheet = false 
+                BrowserMenuItem("网页长截图", Icons.Default.Crop, palette.onSurface) {
+                    // 长截图思路：目前 WebView 只能截取可视区域。
+                    // 实现长截图需要利用 Chrome DevTools Protocol 或者 JS 截取整个 body。
+                    // 简易版：仅截取当前屏幕并保存到相册
+                    webView?.let { wv ->
+                        try {
+                            val bitmap = android.graphics.Bitmap.createBitmap(wv.width, wv.height, android.graphics.Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bitmap)
+                            wv.draw(canvas)
+                            val file = File(DirStore.resolveDownloadDir(ctx), "screenshot_${System.currentTimeMillis()}.png")
+                            java.io.FileOutputStream(file).use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
+                            android.widget.Toast.makeText(ctx, "截图已保存", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {}
+                    }
+                    showMenuSheet = false
                 }
-                BrowserMenuItem(if (isNightMode) "关闭网页夜间" else "强制网页夜间", Icons.Default.DarkMode, palette.onSurface) { 
-                    isNightMode = !isNightMode
-                    if (isNightMode) injectNightMode(webView) else webView?.reload()
-                    showMenuSheet = false 
+                BrowserMenuItem(if (isReadingMode) "退出阅读模式" else "阅读模式", Icons.Default.MenuBook, palette.onSurface) {
+                    isReadingMode = !isReadingMode
+                    if (isReadingMode) injectReaderMode(webView) else webView?.reload()
+                    showMenuSheet = false
                 }
                 BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
                 Spacer(Modifier.height(16.dp))
@@ -254,13 +265,13 @@ fun BrowserScreen(
     }
 }
 
-// 强制注入夜间 CSS
-fun injectNightMode(webView: WebView?) {
+// 注入阅读模式 CSS
+fun injectReaderMode(webView: WebView?) {
     val css = """
         javascript:(function() {
-            var style = document.createElement('style');
-            style.innerHTML = 'html { filter: invert(1) hue-rotate(180deg); background: #111 !important; } img, video { filter: invert(1) hue-rotate(180deg); }';
-            document.head.appendChild(style);
+            var article = document.querySelector('article') || document.querySelector('.content') || document.body;
+            var html = '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{max-width:800px;margin:0 auto;padding:20px;font-size:18px;line-height:1.6;color:#333;background:#fff;} img{max-width:100%;height:auto;}</style></head><body>' + article.innerHTML + '</body></html>';
+            document.open(); document.write(html); document.close();
         })();
     """.trimIndent()
     webView?.evaluateJavascript(css, null)

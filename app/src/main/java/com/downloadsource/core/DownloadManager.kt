@@ -24,20 +24,29 @@ object DownloadManager {
     private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
     private val mutex = Mutex()
-    private const val MAX_CONCURRENT = 3
+    
+    // 方向一：允许用户配置最大并发数 (默认 3)
+    var MAX_CONCURRENT = 3 
+        set(value) { field = value.coerceIn(1, 10) }
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
 
     fun init(context: Context) {
-        _tasks.value = TaskStore.load(context)
-        _tasks.value.forEach { if (it.status == TaskStatus.Running) update(context, it.id) { t -> t.copy(status = TaskStatus.Pending, speed = 0) } }
-        NetworkMonitor.start(context)
+        scope.launch {
+            _tasks.value = TaskStore.loadAsync(context)
+            _tasks.value.forEach { if (it.status == TaskStatus.Running) update(context, it.id) { t -> t.copy(status = TaskStatus.Pending, speed = 0) } }
+            NetworkMonitor.start(context)
+        }
     }
 
     fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, dir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
-        val task = DownloadTask(url = url, fileName = tempName, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+        
+        // 方向三：自动分类存储
+        val finalDir = createCategoryDir(dir, tempName)
+
+        val task = DownloadTask(url = url, fileName = tempName, dirPath = finalDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
         
         scope.launch {
             mutex.withLock { _tasks.value = _tasks.value + task }
@@ -47,12 +56,12 @@ object DownloadManager {
                 val shareInfo = NetDiskParser.detect(url)
                 if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
                     if (BuildConfig.CHANNEL == "zeta") {
-                        // 修复：传入 ShareInfo 对象
                         val results = DiskParser.parse(context, shareInfo)
-                        remove(context, task.id) // 移除占位任务
+                        remove(context, task.id)
                         
                         for (file in results) {
-                            val newTask = DownloadTask(url = file.url, fileName = file.name, dirPath = dir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+                            val catDir = createCategoryDir(dir, file.name)
+                            val newTask = DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
                             mutex.withLock { _tasks.value = _tasks.value + newTask }
                             TaskStore.save(context, _tasks.value)
                             startTask(context, newTask.id)
@@ -68,18 +77,36 @@ object DownloadManager {
                     val mime = parsedUrl.substringAfter("data:").substringBefore(";")
                     val ext = mimeToExtension(mime)
                     val name = if (customName.isNullOrBlank()) "blob_${System.currentTimeMillis()}$ext" else customName
-                    update(context, task.id) { it.copy(url = parsedUrl, fileName = name) }
+                    val catDir = createCategoryDir(dir, name)
+                    update(context, task.id) { it.copy(url = parsedUrl, fileName = name, dirPath = catDir.absolutePath) }
                     startTask(context, task.id)
                     return@launch
                 }
 
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
-                update(context, task.id) { it.copy(url = parsedUrl, fileName = realName) }
+                val catDir = createCategoryDir(dir, realName)
+                update(context, task.id) { it.copy(url = parsedUrl, fileName = realName, dirPath = catDir.absolutePath) }
                 startTask(context, task.id)
             } catch (e: Exception) {
                 update(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
             }
         }
+    }
+
+    // 自动根据后缀创建文件夹
+    private fun createCategoryDir(baseDir: File, fileName: String): File {
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        val sub = when (ext) {
+            "mp4", "mkv", "avi", "mov", "ts" -> "视频"
+            "mp3", "flac", "wav", "m4a" -> "音频"
+            "apk" -> "安装包"
+            "jpg", "png", "gif", "webp" -> "图片"
+            "pdf", "doc", "docx", "xls", "xlsx", "txt" -> "文档"
+            else -> "其他"
+        }
+        val dir = File(baseDir, sub)
+        if (!dir.exists()) dir.mkdirs()
+        return dir
     }
 
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
