@@ -24,10 +24,7 @@ object DownloadManager {
     private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
     private val mutex = Mutex()
-    
-    // 方向一：允许用户配置最大并发数 (默认 3)
-    var MAX_CONCURRENT = 3 
-        set(value) { field = value.coerceIn(1, 10) }
+    var MAX_CONCURRENT = 3
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -35,18 +32,14 @@ object DownloadManager {
     fun init(context: Context) {
         scope.launch {
             _tasks.value = TaskStore.loadAsync(context)
-            _tasks.value.forEach { if (it.status == TaskStatus.Running) update(context, it.id) { t -> t.copy(status = TaskStatus.Pending, speed = 0) } }
+            _tasks.value.forEach { if (it.status == TaskStatus.Running) updateTaskState(context, it.id) { t -> t.copy(status = TaskStatus.Pending, speed = 0) } }
             NetworkMonitor.start(context)
         }
     }
 
-    fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, dir: File) {
+    fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, baseDir: File) {
         val tempName = if (!customName.isNullOrBlank()) customName else "parsing_${System.currentTimeMillis()}"
-        
-        // 方向三：自动分类存储
-        val finalDir = createCategoryDir(dir, tempName)
-
-        val task = DownloadTask(url = url, fileName = tempName, dirPath = finalDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+        val task = DownloadTask(url = url, fileName = tempName, dirPath = baseDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
         
         scope.launch {
             mutex.withLock { _tasks.value = _tasks.value + task }
@@ -57,10 +50,10 @@ object DownloadManager {
                 if (shareInfo.type != NetDiskParser.DiskType.UNKNOWN) {
                     if (BuildConfig.CHANNEL == "zeta") {
                         val results = DiskParser.parse(context, shareInfo)
-                        remove(context, task.id)
+                        remove(context, task.id) // 移除解析中的占位任务
                         
                         for (file in results) {
-                            val catDir = createCategoryDir(dir, file.name)
+                            val catDir = createCategoryDir(baseDir, file.name) // 真实文件名分类
                             val newTask = DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
                             mutex.withLock { _tasks.value = _tasks.value + newTask }
                             TaskStore.save(context, _tasks.value)
@@ -77,23 +70,22 @@ object DownloadManager {
                     val mime = parsedUrl.substringAfter("data:").substringBefore(";")
                     val ext = mimeToExtension(mime)
                     val name = if (customName.isNullOrBlank()) "blob_${System.currentTimeMillis()}$ext" else customName
-                    val catDir = createCategoryDir(dir, name)
-                    update(context, task.id) { it.copy(url = parsedUrl, fileName = name, dirPath = catDir.absolutePath) }
+                    val catDir = createCategoryDir(baseDir, name)
+                    updateTaskState(context, task.id) { it.copy(url = parsedUrl, fileName = name, dirPath = catDir.absolutePath) }
                     startTask(context, task.id)
                     return@launch
                 }
 
                 val realName = if (customName.isNullOrBlank()) probeRealFileName(parsedUrl, headers) else customName
-                val catDir = createCategoryDir(dir, realName)
-                update(context, task.id) { it.copy(url = parsedUrl, fileName = realName, dirPath = catDir.absolutePath) }
+                val catDir = createCategoryDir(baseDir, realName)
+                updateTaskState(context, task.id) { it.copy(url = parsedUrl, fileName = realName, dirPath = catDir.absolutePath) }
                 startTask(context, task.id)
             } catch (e: Exception) {
-                update(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
+                updateTaskState(context, task.id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "解析失败") }
             }
         }
     }
 
-    // 自动根据后缀创建文件夹
     private fun createCategoryDir(baseDir: File, fileName: String): File {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val sub = when (ext) {
@@ -113,43 +105,36 @@ object DownloadManager {
 
     private fun startTask(context: Context, id: String) {
         val runningCount = _tasks.value.count { it.status == TaskStatus.Running }
-        if (runningCount >= MAX_CONCURRENT) { update(context, id) { it.copy(status = TaskStatus.Pending) }; return }
+        if (runningCount >= MAX_CONCURRENT) { updateTaskState(context, id) { it.copy(status = TaskStatus.Pending) }; return }
 
         val t = _tasks.value.find { it.id == id } ?: return
         if (t.status == TaskStatus.Running) return
-        update(context, id) { it.copy(status = TaskStatus.Running, error = null) }
+        updateTaskState(context, id) { it.copy(status = TaskStatus.Running, error = null) }
         DownloadService.start(context)
 
         jobs[id] = scope.launch {
             try {
                 val dir = File(t.dirPath); if (!dir.exists()) dir.mkdirs()
                 val out = segmenter.download(t.id, t.url, dir, t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed ->
-                    update(context, id) { it.copy(downloadedBytes = d, totalBytes = total, speed = speed) }
+                    // 修复：仅仅在内存中更新进度，不每秒都去写数据库！
+                    _tasks.value = _tasks.value.map { if (it.id == id) it.copy(downloadedBytes = d, totalBytes = total, speed = speed) else it }
                     DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
-                update(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
+                updateTaskState(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
                 
                 try {
                     val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                    } else {
-                        @Suppress("DEPRECATION") vibrator.vibrate(200)
-                    }
-                } catch (e: Exception) { /* 忽略 */ }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE)) else @Suppress("DEPRECATION") vibrator.vibrate(200)
+                } catch (e: Exception) { }
 
-                if (out.name.endsWith(".apk", true)) {
-                    installApk(context, out)
-                } else {
-                    MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
-                }
+                if (out.name.endsWith(".apk", true)) installApk(context, out) else MediaScannerConnection.scanFile(context, arrayOf(out.absolutePath), null, null)
                 checkPending(context)
             } catch (e: CancellationException) {
                 segmenter.cancelTask(t.id)
-                update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
+                updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
                 throw e
             } catch (e: Exception) {
-                update(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "未知错误", speed = 0) }
+                updateTaskState(context, id) { it.copy(status = TaskStatus.Failed, error = e.message ?: "未知错误", speed = 0) }
                 checkPending(context)
             }
         }
@@ -177,7 +162,7 @@ object DownloadManager {
     fun pause(context: Context, id: String) {
         segmenter.cancelTask(id)
         jobs[id]?.cancel(); jobs.remove(id)
-        update(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
+        updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
         checkPending(context)
     }
 
@@ -192,7 +177,7 @@ object DownloadManager {
         val t = _tasks.value.find { it.id == id } ?: return
         val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)
         if (oldFile.exists()) oldFile.renameTo(newFile)
-        update(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
+        updateTaskState(context, id) { it.copy(fileName = newName, outputPath = newFile.absolutePath) }
     }
 
     fun remove(context: Context, id: String) {
@@ -203,7 +188,8 @@ object DownloadManager {
         checkPending(context)
     }
 
-    private fun update(context: Context, id: String, block: (DownloadTask) -> DownloadTask) {
+    // 修复：仅在状态变更时调用此方法持久化
+    private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) {
         _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }
         TaskStore.save(context, _tasks.value)
     }

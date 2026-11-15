@@ -66,14 +66,22 @@ class MainActivity : ComponentActivity() {
         val sharedText = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
 
         setContent {
-            val palette = rememberPalette()
-            var isLocked by remember { mutableStateOf(ThemeStore.getLockPassword(this@MainActivity) != null) }
-            
+            var isLocked by remember { mutableStateOf(false) }
+
+            // 修复：在 Resume 时检查锁
+            LifecycleResumeEffect(Unit) {
+                if (ThemeStore.getLockPassword(this@MainActivity) != null) {
+                    isLocked = true
+                }
+                onPauseOrDispose {}
+            }
+
             if (isLocked) {
                 LockScreen(onUnlock = { isLocked = false })
                 return@setContent
             }
 
+            val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
             LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
 
@@ -149,8 +157,9 @@ fun MainScaffold(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val screenWidth = maxWidth
-        val screenHeight = maxHeight
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val screenWidthPx = with(density) { maxWidth.toPx() }
+        val screenHeightPx = with(density) { maxHeight.toPx() }
         
         Scaffold(
             containerColor = Color.Transparent,
@@ -178,12 +187,13 @@ fun MainScaffold(
             }
         }
         
-        // 悬浮球逻辑
-        var offsetX by remember { mutableFloatStateOf((screenWidth.value / 2) - 100f) }
-        var offsetY by remember { mutableFloatStateOf(screenHeight.value - 400f) }
+        // 修复：悬浮球坐标与越界问题
+        var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
+        var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
         var isHoveringBottomBar by remember { mutableStateOf(false) }
-        val bottomBarThreshold = screenHeight.value - 200f
+        val bottomBarThreshold = screenHeightPx - 250f
+        val ballSizePx = with(density) { 56.dp.toPx() }
 
         Box(
             modifier = Modifier
@@ -194,16 +204,17 @@ fun MainScaffold(
                         onDragStart = { showMenu = false },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidth.value * 2.5f - 56f)
-                            offsetY = (offsetY + dragAmount.y).coerceIn(0f, screenHeight.value - 200f)
+                            // 严格限制在屏幕内部
+                            offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenWidthPx - ballSizePx)
+                            offsetY = (offsetY + dragAmount.y).coerceIn(0f, screenHeightPx - ballSizePx)
                             isHoveringBottomBar = offsetY > bottomBarThreshold
                         },
                         onDragEnd = {
                             if (isHoveringBottomBar) {
-                                val third = screenWidth.value * 2.5f / 3f
-                                if (offsetX < third) { currentTab = Tab.DOWNLOAD; offsetX = third / 2 - 28f }
-                                else if (offsetX < third * 2) { currentTab = Tab.BROWSER; offsetX = third * 1.5f - 28f }
-                                else { currentTab = Tab.LIBRARY; offsetX = third * 2.5f - 28f }
+                                val third = screenWidthPx / 3f
+                                if (offsetX < third) { currentTab = Tab.DOWNLOAD; offsetX = third / 2 - ballSizePx / 2 }
+                                else if (offsetX < third * 2) { currentTab = Tab.BROWSER; offsetX = third * 1.5f - ballSizePx / 2 }
+                                else { currentTab = Tab.LIBRARY; offsetX = third * 2.5f - ballSizePx / 2 }
                             }
                             isHoveringBottomBar = false
                         }
@@ -211,10 +222,7 @@ fun MainScaffold(
                 }
                 .clip(CircleShape)
                 .background(if (isHoveringBottomBar) LocalPalette.current.primary.first() else LocalPalette.current.primary.first().copy(alpha = 0.85f))
-                .combinedClickable(
-                    onClick = { showMenu = !showMenu },
-                    onLongClick = { showMenu = true }
-                ),
+                .combinedClickable(onClick = { showMenu = !showMenu }, onLongClick = { showMenu = true }),
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Default.Menu, "Menu", tint = Color.White)
@@ -224,7 +232,7 @@ fun MainScaffold(
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                offset = DpOffset(offsetX.dp, offsetY.dp)
+                offset = DpOffset(with(density) { offsetX.toDp() }, with(density) { offsetY.toDp() })
             ) {
                 DropdownMenuItem(text = { Text("下载列表") }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
                 DropdownMenuItem(text = { Text("浏览器") }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
@@ -251,7 +259,6 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
     var filterMode by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "下载中", "已完成", "失败")
 
-    // 方向三：快捷导航 (预设图标)
     val shortcuts = listOf(
         Pair("哔哩哔哩", "https://m.bilibili.com"),
         Pair("知乎", "https://www.zhihu.com"),
@@ -320,13 +327,9 @@ fun DownloadScreen(initialShareUrl: String?, onPickFolder: ((Uri) -> Unit) -> Un
             
             Spacer(Modifier.height(16.dp))
             
-            // 快捷导航展示
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(shortcuts) { item ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                        // 这里应该跳转内置浏览器，为了简单暂用外部
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.second)))
-                    }) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.second))) }) {
                         Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
                             Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
                         }
