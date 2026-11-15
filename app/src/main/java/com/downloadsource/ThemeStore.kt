@@ -7,7 +7,6 @@ object ThemeStore {
     const val LIGHT = 1
     const val DARK = 2
     
-    // 材质：0-纯色, 1-毛玻璃, 2-液态玻璃
     const val GLASS_SOLID = 0
     const val GLASS_BLUR = 1
     const val GLASS_LIQUID = 2
@@ -17,6 +16,7 @@ object ThemeStore {
     private const val KEY_STYLE = "style"
     private const val KEY_GLASS = "glass_type"
     private const val KEY_IGNORE_VER = "ignore_version"
+    private const val KEY_LOCK_PWD = "lock_password"
 
     fun get(context: Context): Int = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getInt(KEY_MODE, FOLLOW_SYSTEM)
     fun set(context: Context, value: Int) { context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putInt(KEY_MODE, value).apply() }
@@ -29,4 +29,10 @@ object ThemeStore {
 
     fun getIgnoreVersion(context: Context): String? = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY_IGNORE_VER, null)
     fun setIgnoreVersion(context: Context, version: String) { context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY_IGNORE_VER, version).apply() }
+
+    // 修复：补全应用锁密码逻辑
+    fun getLockPassword(context: Context): String? = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY_LOCK_PWD, null)
+    fun setLockPassword(context: Context, password: String?) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY_LOCK_PWD, password).apply()
+    }
 }

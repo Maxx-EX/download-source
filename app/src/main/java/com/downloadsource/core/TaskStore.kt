@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch // 修复：补充导入
 import kotlinx.coroutines.withContext
 
 object TaskStore {
@@ -14,7 +15,6 @@ object TaskStore {
 
     suspend fun loadAsync(context: Context): List<DownloadTask> = withContext(Dispatchers.IO) {
         val dao = AppDatabase.getDatabase(context).taskDao()
-        // 修复：使用 first() 获取当前数据库快照，防止 runBlocking 无限挂起死锁
         val entities = dao.getAllTasks().first()
         
         entities.map { e ->
@@ -29,7 +29,6 @@ object TaskStore {
         }
     }
 
-    // 修复：异步落库，防止主线程卡顿
     fun save(context: Context, list: List<DownloadTask>) {
         val dao = AppDatabase.getDatabase(context).taskDao()
         val entities = list.map { t ->
