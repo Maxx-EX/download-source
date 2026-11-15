@@ -3,6 +3,7 @@ package com.downloadsource.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
@@ -41,8 +42,6 @@ import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
-import com.downloadsource.web.WebInterceptor
-import kotlinx.coroutines.launch
 import java.io.File
 import java.net.URLEncoder
 
@@ -59,32 +58,23 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    val scope = rememberCoroutineScope()
     
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
     var sniffedUrls = remember { mutableStateListOf<String>() }
+    var extractedLinks = remember { mutableStateListOf<String>() } // 提取的普通链接
     
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
-    var pendingFileName by remember { mutableStateOf<String?>(null) } // 接收 JS 传来的文件名
+    var pendingFileName by remember { mutableStateOf<String?>(null) }
     var showSniffList by remember { mutableStateOf(false) }
+    var showLinksList by remember { mutableStateOf(false) }
     var showHistoryList by remember { mutableStateOf(false) }
-    
-    val webInterceptor = remember { WebInterceptor() }
+    var showMenuSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
     LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
-
-    // 监听 JS 拦截到的数据
-    LaunchedEffect(Unit) {
-        webInterceptor.intercepted.collect { data ->
-            pendingDownloadUrl = data.url
-            pendingFileName = data.fileName
-            showDownloadDialog = true
-        }
-    }
 
     val doSearch = {
         val q = urlInput.trim()
@@ -127,7 +117,7 @@ fun BrowserScreen(
                     )
                 }
                 IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
-                IconButton(onClick = { showHistoryList = true }) { Icon(Icons.Default.History, null, tint = palette.onSurface) }
+                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
             }
 
             AndroidView(
@@ -136,19 +126,11 @@ fun BrowserScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        
-                        // 注册 JS 桥接
-                        addJavascriptInterface(webInterceptor, "AndroidBridge")
-                        
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         
                         webViewClient = object : SafeWebViewClient(
-                            onDownloadRequest = { url -> 
-                                pendingDownloadUrl = url
-                                pendingFileName = null // 原生下载清空 JS 传来的文件名
-                                showDownloadDialog = true 
-                            },
+                            onDownloadRequest = { url -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -164,20 +146,32 @@ fun BrowserScreen(
                                 super.onPageStarted(view, url, favicon)
                                 if (url != null) { urlInput = url; currentUrl = url; BrowserHistoryStore.saveSession(ctx, url) }
                             }
-                            // 在页面加载完成后注入终极拦截脚本
+                            
+                            // 提取普通网页链接
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                view?.evaluateJavascript(webInterceptor.injectionScript, null)
+                                view?.evaluateJavascript("""
+                                    (function(){
+                                        var links = document.querySelectorAll('a');
+                                        var arr = [];
+                                        for(var i=0; i<links.length; i++){
+                                            var h = links[i].href;
+                                            if(h && h.startsWith('http') && !h.includes('javascript')){
+                                                arr.push(h);
+                                            }
+                                        }
+                                        return arr.join(',');
+                                    })();
+                                """.trimIndent()) { result ->
+                                    if (!result.isNullOrBlank() && result != "null") {
+                                        val cleanResult = result.replace("\"", "")
+                                        extractedLinks.clear()
+                                        extractedLinks.addAll(cleanResult.split(",").distinct().take(50))
+                                    }
+                                }
                             }
                         }
-                        
-                        // 原生的 DownloadListener 依然保留，作为双保险
-                        setDownloadListener { url, _, contentDisposition, mimetype, _ -> 
-                            pendingDownloadUrl = url
-                            pendingFileName = null
-                            showDownloadDialog = true 
-                        }
-                        
+                        setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true }
                         loadUrl(currentUrl)
                         webView = this
                     }
@@ -186,6 +180,7 @@ fun BrowserScreen(
             )
         }
 
+        // 嗅探悬浮球
         AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
             FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first()) {
                 Icon(Icons.Default.Layers, null, tint = Color.White)
@@ -193,10 +188,43 @@ fun BrowserScreen(
         }
     }
 
+    // 菜单面板
+    if (showMenuSheet) {
+        ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
+            Column(Modifier.padding(16.dp)) {
+                BrowserMenuItem("提取页面所有链接", Icons.Default.Link, palette.onSurface) { 
+                    showLinksList = true; showMenuSheet = false 
+                }
+                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { 
+                    showHistoryList = true; showMenuSheet = false 
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // 链接提取面板
+    if (showLinksList) {
+        Dialog(onDismissRequest = { showLinksList = false }) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
+                Text("页面链接提取 (${extractedLinks.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                LazyColumn {
+                    items(extractedLinks) { url ->
+                        Row(Modifier.fillMaxWidth().clickable { 
+                            pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true; showLinksList = false 
+                        }.padding(12.dp)) {
+                            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showSniffList) {
         Dialog(onDismissRequest = { showSniffList = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
-                Text("已抓取资源 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                Text("已抓取媒体 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                 LazyColumn {
                     items(sniffedUrls) { url ->
                         Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true; showSniffList = false }.padding(12.dp)) {
@@ -228,11 +256,7 @@ fun BrowserScreen(
     }
 
     if (showDownloadDialog) {
-        AddTaskDialog(
-            initialUrl = pendingDownloadUrl, 
-            initialName = pendingFileName ?: "", // 将 JS 解析出的文件名传入弹窗
-            onDismiss = { showDownloadDialog = false }
-        ) { url, name, threads, speed, headers ->
+        AddTaskDialog(initialUrl = pendingDownloadUrl, initialName = pendingFileName ?: "", onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
             DownloadManager.add(ctx, url, name, threads, speed, headers, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }

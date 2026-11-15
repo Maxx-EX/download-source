@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val palette = rememberPalette()
             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_CODE) }
+            LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME) }
 
             if (updateInfo != null) {
                 val ctx = LocalContext.current

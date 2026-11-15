@@ -18,7 +18,7 @@ object UpdateManager {
 
     data class ReleaseInfo(val version: String, val downloadUrl: String, val changelog: String, val isZeta: Boolean)
 
-    suspend fun checkUpdate(currentVersionCode: Int): ReleaseInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkUpdate(currentVersionName: String): ReleaseInfo? = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
                 .url("https://api.github.com/repos/$REPO/releases?per_page=100")
@@ -31,9 +31,6 @@ object UpdateManager {
                 val isZetaChannel = BuildConfig.CHANNEL == "zeta"
                 val targetName = if (isZetaChannel) "Zeta" else "Omega"
 
-                var bestRelease: ReleaseInfo? = null
-                var maxVersionCode = currentVersionCode // 只有比本地大才需要更新
-
                 for (element in jsonArray) {
                     val json = element.asJsonObject
                     if (json.get("draft")?.asBoolean == true || json.get("prerelease")?.asBoolean == true) continue
@@ -42,27 +39,41 @@ object UpdateManager {
                     val body = json.get("body")?.asString ?: "暂无更新日志"
                     val assets = json.getAsJsonArray("assets")
                     
+                    // 剥离前缀 v，并截取真实版本名 (例如 4.7.0)
                     val rawTag = tag.removePrefix("v")
-                    val versionName = rawTag.substringBefore("-build")
-                    // 兼容老版本的 build 号解析
-                    val remoteVersionCode = rawTag.substringAfter("-build", "-1").toIntOrNull() ?: 0
+                    // 兼容以前带 -build 的老格式
+                    val remoteVersionName = rawTag.substringBefore("-build").substringBefore("-zeta").substringBefore("-omega")
 
+                    // 查找对应通道的包 (包名必须包含 Zeta 或 Omega)
                     val apkUrl = assets.firstOrNull { 
                         val name = it.asJsonObject.get("name").asString
                         name.contains(targetName, true) && name.endsWith(".apk") 
                     }?.asJsonObject?.get("browser_download_url")?.asString
 
-                    // 核心修复：寻找真正的最大版本，不受发布顺序干扰
-                    if (!apkUrl.isNullOrBlank() && remoteVersionCode > maxVersionCode) {
-                        maxVersionCode = remoteVersionCode
-                        bestRelease = ReleaseInfo(versionName, apkUrl, body, isZetaChannel)
+                    if (!apkUrl.isNullOrBlank() && isVersionNewer(remoteVersionName, currentVersionName)) {
+                        return@withContext ReleaseInfo(remoteVersionName, apkUrl, body, isZetaChannel)
                     }
                 }
-                return@withContext bestRelease
+                null
             }
         } catch (e: Exception) { 
             null 
         }
+    }
+
+    // 语义化版本比对：4.7.0 vs 4.6.0
+    private fun isVersionNewer(remote: String, local: String): Boolean {
+        return try {
+            val r = remote.split(".").map { it.toIntOrNull() ?: 0 }
+            val l = local.split(".").map { it.toIntOrNull() ?: 0 }
+            for (i in 0 until maxOf(r.size, l.size)) {
+                val rv = r.getOrElse(i) { 0 }
+                val lv = l.getOrElse(i) { 0 }
+                if (rv > lv) return true
+                if (rv < lv) return false
+            }
+            false
+        } catch (e: Exception) { false }
     }
 
     fun showUpdateDialog(ctx: Context, info: ReleaseInfo) {

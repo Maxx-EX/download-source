@@ -64,7 +64,7 @@ fun SettingsScreen(onClose: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Back", tint = palette.onSurface, modifier = Modifier.rotate(180f)) }
-            Text("设置 (v3.0)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = palette.onSurface)
+            Text("设置 (v${BuildConfig.VERSION_NAME})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = palette.onSurface)
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -78,7 +78,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                     if (!checking) {
                         checking = true
                         scope.launch {
-                            val info = UpdateManager.checkUpdate(BuildConfig.VERSION_CODE)
+                            val info = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME)
                             checking = false
                             if (info != null) UpdateManager.showUpdateDialog(ctx, info) else Toast.makeText(ctx, "当前已是最新版 (●'◡'●)", Toast.LENGTH_SHORT).show()
                         }
