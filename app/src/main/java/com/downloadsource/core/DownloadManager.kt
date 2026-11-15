@@ -1,6 +1,7 @@
 package com.downloadsource.core
 
 import android.content.Context
+import com.downloadsource.BuildConfig // 修复：补全导入
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,7 +60,6 @@ object DownloadManager {
                             newTasks.add(DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers))
                         }
                         
-                        // 修复：批量一次性加入内存并单次落库，防止 ANR
                         mutex.withLock { _tasks.value = _tasks.value + newTasks }
                         TaskStore.save(context, _tasks.value)
                         
@@ -107,7 +107,6 @@ object DownloadManager {
         jobs[id] = scope.launch {
             try {
                 val out = segmenter.download(t.id, t.url, File(t.dirPath), t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed -> 
-                    // 只更新内存，不写数据库
                     _tasks.value = _tasks.value.map { if (it.id == id) it.copy(downloadedBytes = d, totalBytes = total, speed = speed) else it } 
                 }
                 updateTaskState(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }

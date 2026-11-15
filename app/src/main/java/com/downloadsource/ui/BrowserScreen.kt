@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Rational
 import android.webkit.*
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,7 +16,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.downloadsource.MainActivity
@@ -25,6 +28,7 @@ import com.downloadsource.storage.DirStore
 import com.downloadsource.web.SafeWebViewClient
 import com.downloadsource.web.WebInterceptor
 import java.io.File
+import kotlin.math.abs
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -36,8 +40,9 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val activity = ctx as? MainActivity
-    
-    // 修复：将 WebView 实例存在 remember 中，防止重组时重建
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { 80.dp.toPx() } // 滑动阈值
+
     val webView = remember {
         WebView(ctx).apply {
             settings.javaScriptEnabled = true
@@ -76,6 +81,7 @@ fun BrowserScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            // 顶部地址栏 (极简)
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextField(value = urlInput, onValueChange = { urlInput = it }, modifier = Modifier.weight(1f))
                 IconButton(onClick = { 
@@ -84,9 +90,32 @@ fun BrowserScreen(
                     }
                 }) { Icon(Icons.Default.PictureInPicture, null) }
             }
+            
+            // 手势控制层
             AndroidView(
                 factory = { webView },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { _, dragAmount ->
+                                totalDrag += dragAmount
+                            },
+                            onDragEnd = {
+                                if (abs(totalDrag) > swipeThresholdPx) {
+                                    if (totalDrag > 0) {
+                                        // 向右滑 -> 后退
+                                        if (webView.canGoBack()) webView.goBack()
+                                    } else {
+                                        // 向左滑 -> 前进
+                                        if (webView.canGoForward()) webView.goForward()
+                                    }
+                                }
+                            }
+                        )
+                    }
             )
         }
     }

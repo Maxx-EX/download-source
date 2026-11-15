@@ -92,7 +92,6 @@ class MainActivity : ComponentActivity() {
                             SecureLockScreen(onUnlock = { isLocked = false }) 
                         } else {
                             var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-                            // 修复：传入前剥离后缀
                             LaunchedEffect(Unit) { updateInfo = UpdateManager.checkUpdate(BuildConfig.VERSION_NAME.substringBefore("-")) }
                             
                             if (clipboardUrl != null) {
@@ -125,17 +124,6 @@ class MainActivity : ComponentActivity() {
                             }
                             
                             MainScaffold()
-                            
-                            val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
-                            LaunchedEffect(tasks) {
-                                val intent = Intent(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE)
-                                intent.setClass(this@MainActivity, com.downloadsource.core.DownloadWidget::class.java)
-                                val ids = android.appwidget.AppWidgetManager.getInstance(this@MainActivity).getAppWidgetIds(
-                                    android.content.ComponentName(this@MainActivity, com.downloadsource.core.DownloadWidget::class.java)
-                                )
-                                intent.putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
-                                sendBroadcast(intent)
-                            }
                         }
                     }
                 }
@@ -151,7 +139,6 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
     var inputPwd by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
     val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
-    
     Column(Modifier.fillMaxSize().background(palette.background.first()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = palette.primary.first())
         Text("安全验证", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
@@ -217,6 +204,7 @@ fun MainScaffold() {
             }
         }
         
+        // 悬浮球
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -227,7 +215,7 @@ fun MainScaffold() {
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                 .size(ballSize)
-                .alpha(if (showMenu) 1f else 0.6f)
+                .alpha(if (showMenu) 1f else 0.8f)
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { showMenu = false },
@@ -246,15 +234,22 @@ fun MainScaffold() {
             Icon(Icons.Default.Menu, "Menu", tint = Color.White)
         }
 
+        // 竖排菜单
         if (showMenu) {
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
                 offset = DpOffset(with(density) { offsetX.toDp() }, with(density) { offsetY.toDp() })
             ) {
-                DropdownMenuItem(text = { Text("下载列表") }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
-                DropdownMenuItem(text = { Text("浏览器") }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
-                DropdownMenuItem(text = { Text("文件库") }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
+                DropdownMenuItem(text = { Text("下载列表") }, leadingIcon = { Icon(Icons.Default.Home, null) }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
+                DropdownMenuItem(text = { Text("浏览器") }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
+                DropdownMenuItem(text = { Text("文件库") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { 
+                    showMenu = false
+                    val ctx = LocalContext.current
+                    ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
+                })
             }
         }
     }
@@ -308,7 +303,6 @@ fun DownloadScreen() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
                         Spacer(Modifier.width(8.dp))
-                        // 修复：两个版本全部显示标签
                         Box(Modifier.background(if (BuildConfig.CHANNEL == "zeta") Color.Red else Color(0xFF3B82F6), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
                             Text(if (BuildConfig.CHANNEL == "zeta") "内测" else "发行", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
@@ -316,7 +310,6 @@ fun DownloadScreen() {
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
                 
-                // 内测功能对全版本开放
                 IconButton(onClick = { ctx.startActivity(Intent(ctx, NetDiskActivity::class.java)) }) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
                 IconButton(onClick = { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
             }
