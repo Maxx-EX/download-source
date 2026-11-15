@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.downloadsource.ThemeStore
+import com.downloadsource.core.AudioService
 import com.downloadsource.storage.DirStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -42,7 +43,6 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
     var searchQuery by remember { mutableStateOf("") }
     var sortBy by remember { mutableStateOf("时间") } 
     
-    // 私密保险箱状态
     var showVault by remember { mutableStateOf(false) }
     var showVaultAuth by remember { mutableStateOf(false) }
     var vaultPwd by remember { mutableStateOf("") }
@@ -63,7 +63,6 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         }
     }
 
-    // 私密空间界面
     if (showVault) {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -84,7 +83,6 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
                                 Text("${file.length() / 1024} KB", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                             }
                             IconButton(onClick = { 
-                                // 移出私密空间
                                 val dest = File(DirStore.resolveDownloadDir(ctx), file.name)
                                 file.renameTo(dest)
                                 vaultFiles = vaultFiles - file
@@ -97,25 +95,17 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         return
     }
 
-    // 普通文件库界面
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("文件库", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface, modifier = Modifier.weight(1f))
-            
-            // 保险箱入口
             if (ThemeStore.getLockPassword(ctx) != null) {
-                IconButton(onClick = { showVaultAuth = true }) { 
-                    Icon(Icons.Default.Lock, "私密保险箱", tint = palette.primary.first()) 
-                }
+                IconButton(onClick = { showVaultAuth = true }) { Icon(Icons.Default.Lock, "私密保险箱", tint = palette.primary.first()) }
             }
-            IconButton(onClick = { sortBy = if (sortBy == "时间") "大小" else "时间" }) {
-                Icon(Icons.Default.Sort, null, tint = palette.onSurface)
-            }
+            IconButton(onClick = { sortBy = if (sortBy == "时间") "大小" else "时间" }) { Icon(Icons.Default.Sort, null, tint = palette.onSurface) }
         }
         
         Spacer(Modifier.height(12.dp))
 
-        // 搜索框
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Icon(Icons.Default.Search, null, tint = palette.onSurfaceDim)
             BasicTextField(
@@ -159,7 +149,15 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface)
                             .clickable {
-                                if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) onPlayVideo(file)
+                                if (file.name.endsWith(".mp4", true) || file.name.endsWith(".mkv", true)) {
+                                    onPlayVideo(file)
+                                } else if (file.name.endsWith(".mp3", true) || file.name.endsWith(".m4a", true)) {
+                                    // 修复：真实传递路径给后台音频服务
+                                    val intent = Intent(ctx, AudioService::class.java)
+                                    intent.putExtra("audio_path", file.absolutePath)
+                                    ctx.startService(intent)
+                                    android.widget.Toast.makeText(ctx, "后台音频已启动", android.widget.Toast.LENGTH_SHORT).show()
+                                }
                             }.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -168,7 +166,6 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
                             Text("${file.length() / 1024 / 1024} MB · ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(file.lastModified())}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                         }
                         IconButton(onClick = { 
-                            // 移入私密空间
                             val vaultDir = File(DirStore.resolveDownloadDir(ctx), ".vault")
                             if (!vaultDir.exists()) vaultDir.mkdirs()
                             val dest = File(vaultDir, file.name)
@@ -182,27 +179,20 @@ fun MediaLibraryScreen(onPlayVideo: (File) -> Unit) {
         }
     }
 
-    // 私密空间密码验证弹窗
     if (showVaultAuth) {
         Dialog(onDismissRequest = { showVaultAuth = false }) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("验证密码", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
-                    value = vaultPwd, onValueChange = { vaultPwd = it }, 
-                    label = { Text("输入应用锁密码") }, 
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                    value = vaultPwd, onValueChange = { vaultPwd = it }, label = { Text("输入应用锁密码") }, 
+                    visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                 )
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = {
                     if (ThemeStore.verifyLockPassword(ctx, vaultPwd)) {
-                        showVault = true
-                        showVaultAuth = false
-                        vaultPwd = ""
-                    } else {
-                        android.widget.Toast.makeText(ctx, "密码错误", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                        showVault = true; showVaultAuth = false; vaultPwd = ""
+                    } else android.widget.Toast.makeText(ctx, "密码错误", android.widget.Toast.LENGTH_SHORT).show()
                 }) { Text("解锁") }
             }
         }
