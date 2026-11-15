@@ -8,44 +8,51 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.downloadsource.MainActivity
 
 class DownloadService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "ACTION_PAUSE_ALL") {
-            DownloadManager.tasks.value.filter { it.status == TaskStatus.Running }.forEach {
-                DownloadManager.pause(this, it.id)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (mgr.getNotificationChannel(CHANNEL_ID) == null) {
+                mgr.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW))
             }
-        } else if (intent?.action == "ACTION_RESUME_ALL") {
-            DownloadManager.autoResumeTasks(this)
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                if (mgr.getNotificationChannel(CHANNEL_ID) == null) mgr.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW))
-            }
-            startForeground(NOTIF_ID, buildBaseNotification("准备下载...").build())
         }
-        return START_NOT_STICKY
-    }
 
-    private fun buildBaseNotification(text: String): NotificationCompat.Builder {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DownloadSource::DownloadWakeLock").apply {
+            acquire(10 * 60 * 1000L) // 获取 10 分钟唤醒锁防休眠
+        }
+
         val openIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        
-        // 功能：通知栏控制
         val pauseIntent = PendingIntent.getService(this, 1, Intent(this, DownloadService::class.java).apply { action = "ACTION_PAUSE_ALL" }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val resumeIntent = PendingIntent.getService(this, 2, Intent(this, DownloadService::class.java).apply { action = "ACTION_RESUME_ALL" }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("Download source 正在运行")
-            .setContentText(text)
+            .setContentText("防止休眠，保障下载")
             .setContentIntent(openIntent)
             .addAction(android.R.drawable.ic_media_pause, "全部暂停", pauseIntent)
             .addAction(android.R.drawable.ic_media_play, "全部继续", resumeIntent)
             .setOngoing(true).setOnlyAlertOnce(true)
+            .build()
+
+        startForeground(NOTIF_ID, notif)
+        
+        // 核心防杀：返回 START_STICKY，系统杀掉后会尝试重建
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        super.onDestroy()
     }
 
     companion object {
@@ -77,7 +84,7 @@ class DownloadService : Service() {
                 .addAction(android.R.drawable.ic_media_pause, "全部暂停", pauseIntent)
                 .addAction(android.R.drawable.ic_media_play, "全部继续", resumeIntent)
                 .setOngoing(true).setProgress(100, progress, total <= 0).setOnlyAlertOnce(true).build()
-            mgr.notify(NOTIF_ID, notif)
+            mgr.notify(NOTIF_ID, mgr.getNotificationChannel(CHANNEL_ID)?.let { notif } ?: notif)
         }
     }
 }

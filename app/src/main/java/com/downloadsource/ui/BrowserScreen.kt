@@ -1,26 +1,15 @@
 package com.downloadsource.ui
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.os.Build
-import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -31,10 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -43,12 +29,11 @@ import com.downloadsource.core.DownloadManager
 import com.downloadsource.storage.BrowserHistoryStore
 import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
+import com.downloadsource.utils.PyRuleEngine
 import com.downloadsource.web.SafeWebViewClient
 import com.downloadsource.web.WebInterceptor
-import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileOutputStream
-import java.net.URLEncoder
+import java.io.ByteArrayInputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -65,73 +50,48 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
-    
+    val snifferType = BrowserPrefs.getSnifferType(ctx) // 0 = JS 引擎, 1 = Native(Python)引擎
+
     var webView by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(BrowserHistoryStore.getSession(ctx)) }
     var urlInput by remember { mutableStateOf(currentUrl) }
     var sniffedUrls = remember { mutableStateListOf<WebInterceptor.SniffedMedia>() }
-    
-    // 外部 URL 加载
+
     LaunchedEffect(externalUrlToLoad) {
         if (externalUrlToLoad != null) {
             webView?.loadUrl(externalUrlToLoad)
-            urlInput = externalUrlToLoad
-            currentUrl = externalUrlToLoad
             onUrlLoaded()
         }
     }
 
-    var isReadingMode by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
     var pendingDownloadUrl by remember { mutableStateOf("") }
-    var pendingFileName by remember { mutableStateOf<String?>(null) }
     var showSniffList by remember { mutableStateOf(false) }
-    var showHistoryList by remember { mutableStateOf(false) }
-    var showMenuSheet by remember { mutableStateOf(false) }
-
     val webInterceptor = remember { WebInterceptor() }
 
-    LaunchedEffect(triggerSniff) { if (triggerSniff) { showSniffList = true; onSniffHandled() } }
-    LaunchedEffect(triggerHistory) { if (triggerHistory) { showHistoryList = true; onHistoryHandled() } }
-    LaunchedEffect(Unit) { webInterceptor.sniffedData.collect { data -> if (sniffedUrls.none { it.url == data.url } && sniffedUrls.size < 100) sniffedUrls.add(data) } }
-
-    val doSearch = {
-        val q = urlInput.trim()
-        if (q.isNotEmpty()) {
-            val target = if (q.startsWith("http")) q else {
-                val engine = BrowserPrefs.getEngine(ctx)
-                val encoded = URLEncoder.encode(q, "UTF-8")
-                when (engine) {
-                    "Baidu" -> "https://www.baidu.com/s?wd=$encoded"
-                    "Google" -> "https://www.google.com/search?q=$encoded"
-                    else -> "https://www.bing.com/search?q=$encoded"
-                }
-            }
-            webView?.loadUrl(target)
-            val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.hideSoftInputFromWindow(webView?.windowToken, 0)
+    LaunchedEffect(Unit) {
+        webInterceptor.sniffedData.collect { data -> 
+            if (sniffedUrls.none { it.url == data.url } && sniffedUrls.size < 100) sniffedUrls.add(data) 
         }
     }
 
     DisposableEffect(Unit) { onDispose { webView?.destroy() } }
-    BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { webView?.goBack() }, enabled = webView?.canGoBack() == true) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = if (webView?.canGoBack() == true) palette.onSurface else palette.onSurfaceDim) }
-                IconButton(onClick = { webView?.goForward() }, enabled = webView?.canGoForward() == true) { Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = if (webView?.canGoForward() == true) palette.onSurface else palette.onSurfaceDim) }
-                Box(Modifier.weight(1f).padding(horizontal = 4.dp).clip(RoundedCornerShape(20.dp)).background(palette.surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    BasicTextField(
-                        value = urlInput, onValueChange = { urlInput = it }, textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
-                        cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                        decorationBox = { innerTextField -> if (urlInput.isEmpty()) Text("搜索或输入网址", color = palette.onSurfaceDim); innerTextField() },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                IconButton(onClick = { doSearch() }) { Icon(Icons.Default.Search, null, tint = palette.primary.first()) }
-                IconButton(onClick = { showMenuSheet = true }) { Icon(Icons.Default.MoreVert, null, tint = palette.onSurface) }
+            // 顶部栏 (简化)
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = palette.onSurface) }
+                IconButton(onClick = { webView?.goForward() }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = palette.onSurface) }
+                TextField(
+                    value = urlInput, onValueChange = { urlInput = it },
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp).clip(RoundedCornerShape(20.dp)),
+                    singleLine = true,
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = {
+                        webView?.loadUrl(urlInput)
+                    })
+                )
+                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Default.Refresh, null, tint = palette.onSurface) }
             }
 
             AndroidView(
@@ -139,55 +99,37 @@ fun BrowserScreen(
                     WebView(c).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        // 修复网页打不开：允许混合内容
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        
                         addJavascriptInterface(webInterceptor, "AndroidBridge")
-                        
-                        // 新功能：长按网页图片/链接免嗅探直接下载
-                        setOnLongClickListener { view ->
-                            val hitTestResult = (view as WebView).hitTestResult
-                            val type = hitTestResult.type
-                            val extra = hitTestResult.extra
-                            if (type == WebView.HitTestResult.IMAGE_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE || type == WebView.HitTestResult.SRC_ANCHOR_TYPE) {
-                                if (extra != null) {
-                                    pendingDownloadUrl = extra
-                                    pendingFileName = null
-                                    showDownloadDialog = true
-                                    return@setOnLongClickListener true
-                                }
-                            }
-                            false
-                        }
-                        
+
                         webViewClient = object : SafeWebViewClient(
-                            onDownloadRequest = { url -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true },
+                            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
                             onPlayM3u8 = { url -> onPlayStream(url) }
                         ) {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                                val url = request.url.toString()
-                                if (url.contains("doubleclick.net") || url.contains("googlesyndication") || url.contains("cpro.baidu.com")) {
-                                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                                val url = request.url.toString().lowercase()
+                                
+                                // 核心：基于 Python 规则引擎的拦截
+                                if (PyRuleEngine.shouldBlock(url)) {
+                                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                                 }
-                                if (url.contains("captcha") || url.contains("verify")) return null
-                                val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
-                                if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip") && !url.contains("favicon")) {
-                                    if (sniffedUrls.none { it.url == url } && sniffedUrls.size < 100) sniffedUrls.add(WebInterceptor.SniffedMedia(url, null, false))
+                                if (snifferType == 1 && PyRuleEngine.shouldSniff(url)) {
+                                    if (sniffedUrls.none { it.url == url }) {
+                                        sniffedUrls.add(WebInterceptor.SniffedMedia(url, null, false))
+                                    }
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                super.onPageStarted(view, url, favicon)
-                                if (url != null) { urlInput = url; currentUrl = url; BrowserHistoryStore.saveSession(ctx, url) }
-                            }
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                view?.evaluateJavascript(webInterceptor.injectionScript, null)
-                                if (isReadingMode) injectReaderMode(view)
+                                // JS 引擎
+                                if (snifferType == 0) {
+                                    view?.evaluateJavascript(webInterceptor.injectionScript, null)
+                                }
                             }
                         }
-                        setDownloadListener { url, _, _, _, _ -> pendingDownloadUrl = url; pendingFileName = null; showDownloadDialog = true }
                         loadUrl(currentUrl)
                         webView = this
                     }
@@ -195,105 +137,12 @@ fun BrowserScreen(
                 modifier = Modifier.fillMaxSize().background(palette.surface)
             )
         }
-
-        AnimatedVisibility(visible = sniffedUrls.isNotEmpty(), enter = scaleIn(), exit = scaleOut(), modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
-            FloatingActionButton(onClick = { showSniffList = true }, containerColor = palette.primary.first()) {
-                BadgedBox(badge = { Badge { Text(sniffedUrls.size.toString()) } }) { Icon(Icons.Default.Layers, null, tint = Color.White) }
-            }
-        }
-    }
-
-    if (showMenuSheet) {
-        ModalBottomSheet(onDismissRequest = { showMenuSheet = false }, containerColor = palette.surface) {
-            Column(Modifier.padding(16.dp)) {
-                BrowserMenuItem("网页全屏截图", Icons.Default.Crop, palette.onSurface) {
-                    webView?.evaluateJavascript("document.body.scrollHeight") { height ->
-                        val h = height.toFloatOrNull()?.toInt() ?: webView!!.height
-                        val bitmap = Bitmap.createBitmap(webView!!.width, h, Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(bitmap)
-                        webView!!.draw(canvas)
-                        try {
-                            val file = File(DirStore.resolveDownloadDir(ctx), "screenshot_${System.currentTimeMillis()}.png")
-                            FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
-                            android.widget.Toast.makeText(ctx, "截图已保存至文件库", android.widget.Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {}
-                    }
-                    showMenuSheet = false
-                }
-                BrowserMenuItem(if (isReadingMode) "退出阅读模式" else "阅读模式", Icons.Default.MenuBook, palette.onSurface) {
-                    isReadingMode = !isReadingMode
-                    if (isReadingMode) injectReaderMode(webView) else webView?.reload()
-                    showMenuSheet = false
-                }
-                BrowserMenuItem("历史记录", Icons.Default.History, palette.onSurface) { showHistoryList = true; showMenuSheet = false }
-                Spacer(Modifier.height(16.dp))
-            }
-        }
-    }
-
-    if (showSniffList) {
-        Dialog(onDismissRequest = { showSniffList = false }) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("极限嗅探结果 (${sniffedUrls.size})", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = palette.onSurface)
-                    TextButton(onClick = { sniffedUrls.clear(); showSniffList = false }) { Text("清空") }
-                }
-                LazyColumn {
-                    items(sniffedUrls) { media ->
-                        Row(Modifier.fillMaxWidth().clickable { pendingDownloadUrl = media.url; pendingFileName = null; showDownloadDialog = true; showSniffList = false }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (media.isBlob) Icons.Default.BubbleChart else Icons.Default.PlayCircle, null, tint = palette.primary.first())
-                            Spacer(Modifier.width(12.dp))
-                            Text(if (media.isBlob) "加密/动态流 (Blob)" else media.url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showHistoryList) {
-        val history = BrowserHistoryStore.getHistory(ctx)
-        Dialog(onDismissRequest = { showHistoryList = false }) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 400.dp).clip(RoundedCornerShape(16.dp)).background(palette.surface).padding(16.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("历史记录", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    TextButton(onClick = { BrowserHistoryStore.clearHistory(ctx) }) { Text("清空") }
-                }
-                LazyColumn {
-                    items(history) { url ->
-                        Row(Modifier.fillMaxWidth().clickable { webView?.loadUrl(url); showHistoryList = false }.padding(12.dp)) {
-                            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = palette.onSurface)
-                        }
-                    }
-                }
-            }
-        }
     }
 
     if (showDownloadDialog) {
-        AddTaskDialog(initialUrl = pendingDownloadUrl, initialName = pendingFileName ?: "", onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
+        AddTaskDialog(initialUrl = pendingDownloadUrl, onDismiss = { showDownloadDialog = false }) { url, name, threads, speed, headers ->
             DownloadManager.add(ctx, url, name, threads, speed, headers, DirStore.resolveDownloadDir(ctx))
             showDownloadDialog = false
         }
-    }
-}
-
-fun injectReaderMode(webView: WebView?) {
-    val css = """
-        javascript:(function() {
-            var style = document.createElement('style');
-            style.innerHTML = 'body > *:not(article):not(main):not(.content):not(#content) { display: none !important; } article, main, .content, #content { max-width: 800px !important; margin: 0 auto !important; font-size: 18px !important; line-height: 1.6 !important; background: #fff !important; color: #333 !important; padding: 20px !important; }';
-            document.head.appendChild(style);
-        })();
-    """.trimIndent()
-    webView?.evaluateJavascript(css, null)
-}
-
-@Composable
-fun BrowserMenuItem(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onClick() }.padding(vertical = 14.dp, horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = color)
-        Spacer(Modifier.width(16.dp))
-        Text(text, color = color, style = MaterialTheme.typography.bodyLarge)
     }
 }
