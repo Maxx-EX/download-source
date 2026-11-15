@@ -97,12 +97,12 @@ class MainActivity : ComponentActivity() {
                             if (clipboardUrl != null) {
                                 AlertDialog(
                                     onDismissRequest = { clipboardUrl = null },
-                                    title = { Text("检测到剪贴板有链接哦 (★ ω ★)") },
+                                    title = { Text("检测到剪贴板链接 (★ ω ★)") },
                                     text = { Text("发现: ${clipboardUrl?.take(30)}...\n是否立即下载？") },
                                     confirmButton = { TextButton(onClick = { 
                                         DownloadManager.add(this@MainActivity, clipboardUrl!!, null, 8, 0, emptyMap(), DirStore.resolveDownloadDir(this@MainActivity))
                                         clipboardUrl = null 
-                                    }) { Text("立即下载") } },
+                                    }) { Text("立即下载 (๑•̀ㅂ•́)و✧") } },
                                     dismissButton = { TextButton(onClick = { clipboardUrl = null }) { Text("忽略") } }
                                 )
                             }
@@ -141,7 +141,7 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
     val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
     Column(Modifier.fillMaxSize().background(palette.background.first()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = palette.primary.first())
-        Text("安全验证", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
+        Text("安全验证 (●'◡'●)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 24.dp)) { repeat(inputPwd.length.coerceAtMost(8)) { Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first())) } }
         Text(errorMsg, color = Color.Red, fontSize = 14.sp)
         LazyVerticalGrid(columns = GridCells.Fixed(6), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().height(300.dp)) {
@@ -149,7 +149,7 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
                 Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).clickable {
                     errorMsg = ""
                     if (key == "DEL") { if (inputPwd.isNotEmpty()) inputPwd = inputPwd.dropLast(1) } else { if (inputPwd.length < 8) inputPwd += key }
-                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码不对哦 (￣ε(#￣)"; inputPwd = "" } }
+                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码错误 (￣ε(#￣)"; inputPwd = "" } }
                 }, contentAlignment = Alignment.Center) { if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) }
             }
         }
@@ -164,8 +164,9 @@ fun MainScaffold() {
     val ctx = LocalContext.current
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
-    var triggerSniff by remember { mutableStateOf(false) }
-    var triggerHistory by remember { mutableStateOf(false) }
+    
+    // 修复：用于快速在浏览器打开指定网址
+    var browserUrlToLoad by remember { mutableStateOf<String?>(null) }
 
     if (playingUri != null) {
         VideoPlayerScreen(uri = playingUri!!, onBack = { playingUri = null })
@@ -189,16 +190,16 @@ fun MainScaffold() {
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (currentTab) {
-                    Tab.DOWNLOAD -> DownloadScreen()
+                    Tab.DOWNLOAD -> DownloadScreen(
+                        onOpenBrowserUrl = { url -> browserUrlToLoad = url; currentTab = Tab.BROWSER }
+                    )
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
                         onPlayStream = { playingUri = Uri.parse(it) },
-                        triggerSniff = triggerSniff,
-                        onSniffHandled = { triggerSniff = false },
-                        triggerHistory = triggerHistory,
-                        onHistoryHandled = { triggerHistory = false },
-                        externalUrlToLoad = null,
-                        onUrlLoaded = {}
+                        triggerSniff = false, onSniffHandled = {},
+                        triggerHistory = false, onHistoryHandled = {},
+                        externalUrlToLoad = browserUrlToLoad,
+                        onUrlLoaded = { browserUrlToLoad = null }
                     )
                     Tab.LIBRARY -> MediaLibraryScreen(onPlayVideo = { playingUri = Uri.fromFile(it) })
                 }
@@ -240,12 +241,11 @@ fun MainScaffold() {
                 onDismissRequest = { showMenu = false },
                 offset = DpOffset(with(density) { offsetX.toDp() }, with(density) { offsetY.toDp() })
             ) {
-                // 修复：这里直接使用在外层获取的 ctx，不再在 onClick 中调用 LocalContext.current
-                DropdownMenuItem(text = { Text("下载列表") }, leadingIcon = { Icon(Icons.Default.Home, null) }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
-                DropdownMenuItem(text = { Text("浏览器") }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
-                DropdownMenuItem(text = { Text("文件库") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
+                DropdownMenuItem(text = { Text("下载列表 (●'◡'●)") }, leadingIcon = { Icon(Icons.Default.Home, null) }, onClick = { currentTab = Tab.DOWNLOAD; showMenu = false })
+                DropdownMenuItem(text = { Text("浏览器 (★ ω ★)") }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { currentTab = Tab.BROWSER; showMenu = false })
+                DropdownMenuItem(text = { Text("文件库 (￣▽￣)") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, onClick = { currentTab = Tab.LIBRARY; showMenu = false })
                 HorizontalDivider()
-                DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { 
+                DropdownMenuItem(text = { Text("设置 (๑•̀ㅂ•́)و✧") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { 
                     showMenu = false
                     ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
                 })
@@ -255,7 +255,7 @@ fun MainScaffold() {
 }
 
 @Composable
-fun DownloadScreen() {
+fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
@@ -290,7 +290,8 @@ fun DownloadScreen() {
                     "Google" -> "https://www.google.com/search?q=$encoded"
                     else -> "https://www.bing.com/search?q=$encoded"
                 }
-                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                // 修复：改为在内置浏览器打开
+                onOpenBrowserUrl(url)
             }
         }
     }
@@ -320,7 +321,7 @@ fun DownloadScreen() {
                     value = searchQuery, onValueChange = { searchQuery = it }, textStyle = TextStyle(color = palette.onSurface),
                     cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                    decorationBox = { inner -> if (searchQuery.isEmpty()) Text("输入链接或搜索关键词...", color = palette.onSurfaceDim); inner() },
+                    decorationBox = { inner -> if (searchQuery.isEmpty()) Text("输入链接或搜索关键词... (●'◡'●)", color = palette.onSurfaceDim); inner() },
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                 )
                 if (searchQuery.isNotEmpty()) {
@@ -333,7 +334,8 @@ fun DownloadScreen() {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(shortcuts) { item ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { 
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.second))) 
+                        // 修复：内置浏览器加载
+                        onOpenBrowserUrl(item.second) 
                     }.padding(8.dp)) {
                         Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
                             Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
@@ -367,7 +369,7 @@ fun DownloadScreen() {
             }
 
             if (filteredTasks.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务呢 (￣▽￣)~*呢 (￣▽￣)~*", color = palette.onSurfaceDim) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务呢 (￣▽￣)~*", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(filteredTasks, key = { it.id }) { task ->
