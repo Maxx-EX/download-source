@@ -51,12 +51,13 @@ fun BrowserScreen(
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
+    
+    // 修复：严格闭合 remember 块
     val webView = remember {
         WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            // 极限伪装 UA
             settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         }
@@ -69,11 +70,32 @@ fun BrowserScreen(
 
     DisposableEffect(Unit) {
         webView.webViewClient = object : SafeWebViewClient(
-            onDownloadRequest = { url -> pendingDownloadUrl = url; showDownloadDialog = true },
-            onPlayM3u8 = { url -> onPlayStream(url) }
-        )
+            onDownloadRequest = { url -> 
+                pendingDownloadUrl = url
+                showDownloadDialog = true 
+            },
+            onPlayM3u8 = { url -> 
+                onPlayStream(url) 
+            }
+        ) {
+            // 补充文本嗅探：拦截网页里的 .txt, .json, .md 等纯文本资源
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val url = request.url.toString()
+                if (url.contains("captcha") || url.contains("verify")) return null
+                val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
+                if (ext in listOf("txt", "md", "json", "xml", "csv", "yml", "yaml") && !url.contains("favicon")) {
+                    pendingDownloadUrl = url
+                    showDownloadDialog = true
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+        }
         webView.loadUrl(currentUrl)
-        onDispose { webView.destroy() }
+        
+        onDispose { 
+            webView.stopLoading()
+            webView.destroy() 
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -83,7 +105,7 @@ fun BrowserScreen(
                     value = urlInput,
                     onValueChange = { urlInput = it },
                     modifier = Modifier.weight(1f).clip(RoundedCornerShape(24.dp)),
-                    placeholder = { Text("搜索或输入网址") },
+                    placeholder = { Text("搜索或输入网址 (●'◡'●)") },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),

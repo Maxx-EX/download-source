@@ -14,7 +14,11 @@ open class SafeWebViewClient(
 ) : WebViewClient() {
 
     private val blockedSchemes = setOf("baiduboxapp", "baiduboxlite")
-    private val downloadExtensions = listOf(".mp4", ".mkv", ".mp3", ".m3u8", ".zip", ".rar", ".apk", ".pdf", ".exe")
+    // 加入 txt 等文本后缀
+    private val downloadExtensions = listOf(
+        ".mp4", ".mkv", ".mp3", ".m3u8", ".zip", ".rar", ".apk", ".pdf", ".exe",
+        ".txt", ".md", ".json", ".xml", ".csv", ".epub"
+    )
     private val adHosts = setOf("doubleclick.net", "google-analytics.com", "googlesyndication.com", "cpro.baidu.com")
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -32,7 +36,6 @@ open class SafeWebViewClient(
 
         if (scheme in blockedSchemes) return true
 
-        // 核心修复：拦截并唤醒 QQ/微信/支付宝 等外部 App
         if (scheme == "intent") {
             try {
                 val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
@@ -48,7 +51,8 @@ open class SafeWebViewClient(
             } catch (e: Exception) { return true }
         }
 
-        if (downloadExtensions.any { url.contains(it, ignoreCase = true) }) {
+        val cleanUrl = url.substringBefore("?")
+        if (downloadExtensions.any { cleanUrl.endsWith(it, ignoreCase = true) }) {
             if (url.contains(".m3u8")) onPlayM3u8(url) else onDownloadRequest(url)
             return true 
         }
