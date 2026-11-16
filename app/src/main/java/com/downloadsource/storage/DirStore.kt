@@ -1,6 +1,7 @@
 package com.downloadsource.storage
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -10,7 +11,6 @@ object DirStore {
     private const val PREF = "ds_pref"
     private const val KEY_PATH = "download_path"
 
-    // 兼容 MainActivity 的调用
     fun save(context: Context, uri: Uri) {
         val path = treeUriToPath(uri)
         if (path != null) setCustomPath(context, path)
@@ -29,8 +29,15 @@ object DirStore {
         return defaultDir(context)
     }
 
+    // 修复：直接使用 App 的公共下载目录，彻底解决 Android 10+ 权限问题
     fun defaultDir(context: Context): File {
-        val f = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "DownloadSource")
+        val publicDownload = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (publicDownload.exists() && publicDownload.canWrite()) {
+            val f = File(publicDownload, "DownloadSource")
+            if (!f.exists()) f.mkdirs()
+            return f
+        }
+        val f = File(context.getExternalFilesDir(null), "DownloadSource")
         if (!f.exists()) f.mkdirs()
         return f
     }
@@ -39,13 +46,9 @@ object DirStore {
         val docId = DocumentsContract.getTreeDocumentId(uri)
         val split = docId.split(":").toTypedArray()
         if (split.size >= 2) {
-            val type = split[0]
-            val path = split[1]
-            if ("primary".equals(type, ignoreCase = true)) {
-                Environment.getExternalStorageDirectory().absolutePath + "/" + path
-            } else {
-                "/storage/$type/$path"
-            }
+            val type = split[0]; val path = split[1]
+            if ("primary".equals(type, ignoreCase = true)) Environment.getExternalStorageDirectory().absolutePath + "/" + path
+            else "/storage/$type/$path"
         } else null
     } catch (e: Exception) { null }
 }

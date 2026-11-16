@@ -53,6 +53,7 @@ import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
 import com.downloadsource.ui.*
 import com.downloadsource.utils.PyRuleEngine
+import com.downloadsource.utils.SearchEngine
 import java.io.File
 import java.net.URLEncoder
 import kotlin.math.roundToInt
@@ -111,7 +112,7 @@ class MainActivity : ComponentActivity() {
                                 val ctx = LocalContext.current
                                 AlertDialog(
                                     onDismissRequest = { updateInfo = null }, 
-                                    title = { Text("发现新版本 v${updateInfo?.version}") }, 
+                                    title = { Text("发现新版本 v${updateInfo?.version} (●'◡'●)") }, 
                                     text = { Text(updateInfo?.changelog ?: "") }, 
                                     confirmButton = { 
                                         TextButton(onClick = { 
@@ -139,18 +140,28 @@ fun SecureLockScreen(onUnlock: () -> Unit) {
     var inputPwd by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
     val keys = listOf("1","2","3","4","5","6","7","8","9","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F","G","H","J","K","L","Z","X","C","V","B","N","M","0","DEL")
+    
     Column(Modifier.fillMaxSize().background(palette.background.first()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, null, modifier = Modifier.size(64.dp), tint = palette.primary.first())
         Text("安全验证 (●'◡'●)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = palette.onSurface)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 24.dp)) { repeat(inputPwd.length.coerceAtMost(8)) { Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first())) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 24.dp)) { 
+            repeat(inputPwd.length.coerceAtMost(8)) { Box(Modifier.size(16.dp).clip(CircleShape).background(palette.primary.first())) } 
+        }
         Text(errorMsg, color = Color.Red, fontSize = 14.sp)
         LazyVerticalGrid(columns = GridCells.Fixed(6), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().height(300.dp)) {
             items(keys) { key ->
                 Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).clickable {
                     errorMsg = ""
                     if (key == "DEL") { if (inputPwd.isNotEmpty()) inputPwd = inputPwd.dropLast(1) } else { if (inputPwd.length < 8) inputPwd += key }
-                    if (inputPwd.length >= 4) { if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() else if (inputPwd.length == 8) { errorMsg = "密码错误 (￣ε(#￣)"; inputPwd = "" } }
-                }, contentAlignment = Alignment.Center) { if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) }
+                    if (inputPwd.length >= 4) { 
+                        if (ThemeStore.verifyLockPassword(ctx, inputPwd)) onUnlock() 
+                        else if (inputPwd.length == 8) { 
+                            errorMsg = "密码错误，雑魚~ (￣ε(#￣)"; inputPwd = "" 
+                        } 
+                    }
+                }, contentAlignment = Alignment.Center) { 
+                    if (key == "DEL") Icon(Icons.Default.Backspace, null, tint = palette.onSurface) else Text(key, fontSize = 20.sp, color = palette.onSurface) 
+                }
             }
         }
     }
@@ -161,11 +172,9 @@ enum class Tab { DOWNLOAD, BROWSER, LIBRARY }
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold() {
-    val ctx = LocalContext.current
+    val ctx = LocalContext.current // 提前获取，解决悬浮球菜单上下文问题
     var currentTab by remember { mutableStateOf(Tab.DOWNLOAD) }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
-    
-    // 修复：用于快速在浏览器打开指定网址
     var browserUrlToLoad by remember { mutableStateOf<String?>(null) }
 
     if (playingUri != null) {
@@ -190,14 +199,10 @@ fun MainScaffold() {
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (currentTab) {
-                    Tab.DOWNLOAD -> DownloadScreen(
-                        onOpenBrowserUrl = { url -> browserUrlToLoad = url; currentTab = Tab.BROWSER }
-                    )
+                    Tab.DOWNLOAD -> DownloadScreen(onOpenBrowserUrl = { url -> browserUrlToLoad = url; currentTab = Tab.BROWSER })
                     Tab.BROWSER -> BrowserScreen(
                         onPlayVideo = { playingUri = Uri.fromFile(it) },
                         onPlayStream = { playingUri = Uri.parse(it) },
-                        triggerSniff = false, onSniffHandled = {},
-                        triggerHistory = false, onHistoryHandled = {},
                         externalUrlToLoad = browserUrlToLoad,
                         onUrlLoaded = { browserUrlToLoad = null }
                     )
@@ -206,6 +211,7 @@ fun MainScaffold() {
             }
         }
         
+        // 悬浮球
         var offsetX by remember { mutableFloatStateOf(screenWidthPx / 2) }
         var offsetY by remember { mutableFloatStateOf(screenHeightPx - 400f) }
         var showMenu by remember { mutableStateOf(false) }
@@ -267,8 +273,7 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
     var searchQuery by remember { mutableStateOf("") }
     var filterMode by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "下载中", "已完成", "失败")
-
-    // 多选模式状态
+    
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedTasks = remember { mutableStateListOf<String>() }
 
@@ -287,14 +292,8 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
                 DownloadManager.add(ctx, q, null, 8, 0, emptyMap(), File(dirPath))
                 searchQuery = ""
             } else {
-                val engine = BrowserPrefs.getEngine(ctx)
-                val encoded = URLEncoder.encode(q, "UTF-8")
-                val url = when(engine) {
-                    "Baidu" -> "https://www.baidu.com/s?wd=$encoded"
-                    "Google" -> "https://www.google.com/search?q=$encoded"
-                    else -> "https://www.bing.com/search?q=$encoded"
-                }
-                onOpenBrowserUrl(url)
+                val engine = SearchEngine.getCurrent(ctx)
+                onOpenBrowserUrl(engine.baseUrl + URLEncoder.encode(q, "UTF-8"))
             }
         }
     }
@@ -316,17 +315,15 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
                 }
                 
                 if (isSelectionMode) {
-                    // 一键移入保险箱按钮
+                    // 多选：一键移入保险箱
                     IconButton(onClick = {
                         selectedTasks.forEach { DownloadManager.moveToVault(ctx, it) }
                         selectedTasks.clear(); isSelectionMode = false
-                    }) { Icon(Icons.Default.Lock, "移入保险箱", tint = palette.primary.first()) }
-                    
+                    }) { Icon(Icons.Default.Lock, "移入保险箱 (๑•̀ㅂ•́)و✧", tint = palette.primary.first()) }
                     IconButton(onClick = {
                         selectedTasks.forEach { DownloadManager.remove(ctx, it) }
                         selectedTasks.clear(); isSelectionMode = false
                     }) { Icon(Icons.Default.Delete, "删除", tint = Color.Red) }
-                    
                     IconButton(onClick = { isSelectionMode = false; selectedTasks.clear() }) { Icon(Icons.Default.Close, "取消", tint = palette.onSurface) }
                 } else {
                     if (tasks.isNotEmpty()) IconButton(onClick = { isSelectionMode = true }) { Icon(Icons.Default.Checklist, "多选", tint = palette.onSurface) }
@@ -390,7 +387,7 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
             }
 
             if (filteredTasks.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务呢 (￣▽￣)~*", color = palette.onSurfaceDim) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无任务呢，雑魚 (￣▽￣)~*", color = palette.onSurfaceDim) }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(filteredTasks, key = { it.id }) { task ->

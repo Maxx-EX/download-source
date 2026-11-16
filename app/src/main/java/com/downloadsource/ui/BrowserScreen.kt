@@ -2,9 +2,7 @@ package com.downloadsource.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
 import android.webkit.*
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,8 +35,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import com.downloadsource.core.DownloadManager
 import com.downloadsource.storage.BrowserHistoryStore
-import com.downloadsource.storage.BrowserPrefs
 import com.downloadsource.storage.DirStore
+import com.downloadsource.utils.SearchEngine
 import com.downloadsource.web.SafeWebViewClient
 import com.downloadsource.web.WebInterceptor
 import java.io.File
@@ -49,14 +47,11 @@ import java.net.URLEncoder
 @Composable
 fun BrowserScreen(
     onPlayVideo: (File) -> Unit, onPlayStream: (String) -> Unit,
-    triggerSniff: Boolean, onSniffHandled: () -> Unit,
-    triggerHistory: Boolean, onHistoryHandled: () -> Unit,
     externalUrlToLoad: String?, onUrlLoaded: () -> Unit
 ) {
     val ctx = LocalContext.current
     val palette = LocalPalette.current
     
-    // 修复：获取上次退出的URL（如果页面异常关闭）
     val webView = remember {
         WebView(ctx).apply {
             settings.javaScriptEnabled = true
@@ -98,28 +93,21 @@ fun BrowserScreen(
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 if (url != null) {
-                    // 核心修复：页面开始加载时，立刻保存状态，防止意外关闭丢失
-                    BrowserHistoryStore.saveSession(ctx, url)
+                    BrowserHistoryStore.saveSession(ctx, url) // 意外恢复
                     urlInput = url
                 }
             }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url.toString()
-                if (url.contains("doubleclick.net") || url.contains("googlesyndication.com")) {
-                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
-                }
+                if (url.contains("doubleclick.net")) return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                 val ext = url.substringAfterLast('.', "").lowercase().substringBefore('?')
-                // 极限兜底嗅探：包含文本和视频
-                if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip", "ts", "mkv", "avi", "txt", "json", "pdf") && !url.contains("favicon")) {
-                    if (sniffedUrls.none { it.url == url } && sniffedUrls.size < 100) {
-                        sniffedUrls.add(WebInterceptor.SniffedMedia(url, null, false))
-                    }
+                if (ext in listOf("mp4", "mp3", "m3u8", "apk", "zip", "ts", "mkv", "txt", "json") && !url.contains("favicon")) {
+                    if (sniffedUrls.none { it.url == url } && sniffedUrls.size < 100) sniffedUrls.add(WebInterceptor.SniffedMedia(url, null, false))
                 }
                 return super.shouldInterceptRequest(view, request)
             }
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // 注入 JS 深度嗅探
                 view?.evaluateJavascript(webInterceptor.injectionScript, null)
             }
         }
@@ -127,15 +115,14 @@ fun BrowserScreen(
         onDispose { webView.destroy() }
     }
 
-    // 浏览器 UI 大改版
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            // 顶部极简液态玻璃搜索栏
+            // 液态玻璃质感搜索栏
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(24.dp))
                         .background(palette.surface)
-                        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(24.dp))
+                        .border(1.2.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.1f))), RoundedCornerShape(24.dp))
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     BasicTextField(
@@ -143,21 +130,31 @@ fun BrowserScreen(
                         textStyle = TextStyle(color = palette.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                         cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { webView.loadUrl(urlInput) }),
-                        decorationBox = { inner -> if (urlInput.isEmpty()) Text("搜索或输入网址... (●'◡'●)", color = palette.onSurfaceDim); inner() },
+                        keyboardActions = KeyboardActions(onGo = { 
+                            val q = urlInput.trim()
+                            if (q.isNotEmpty()) {
+                                // 修复：智能分流
+                                val target = if (q.startsWith("http") || q.contains(".com") || q.contains(".cn")) {
+                                    if (q.startsWith("http")) q else "https://$q"
+                                } else {
+                                    val engine = SearchEngine.getCurrent(ctx)
+                                    engine.baseUrl + URLEncoder.encode(q, "UTF-8")
+                                }
+                                webView.loadUrl(target)
+                            }
+                        }),
+                        decorationBox = { inner -> if (urlInput.isEmpty()) Text("搜索或输入网址 (●'◡'●)", color = palette.onSurfaceDim); inner() },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
             
-            // WebView
             AndroidView(factory = { webView }, modifier = Modifier.weight(1f).fillMaxWidth())
 
-            // 底部悬浮控制栏 (毛玻璃质感)
+            // 底部控制栏
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 12.dp)
-                    .clip(RoundedCornerShape(28.dp)).background(palette.surface.copy(alpha = 0.9f))
-                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(28.dp))
+                    .clip(RoundedCornerShape(28.dp)).background(palette.surface)
                     .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
             ) {
@@ -170,13 +167,7 @@ fun BrowserScreen(
 
         // 资源嗅探球常驻
         FloatingActionButton(
-            onClick = { 
-                if (sniffedUrls.isEmpty()) {
-                    android.widget.Toast.makeText(ctx, "暂未抓取到资源，请播放视频或刷新 (￣▽￣)", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    showSniffList = true 
-                }
-            },
+            onClick = { if (sniffedUrls.isEmpty()) android.widget.Toast.makeText(ctx, "暂未抓取到资源 (￣▽￣)", android.widget.Toast.LENGTH_SHORT).show() else showSniffList = true },
             containerColor = if (sniffedUrls.isEmpty()) palette.onSurfaceDim.copy(alpha = 0.5f) else palette.primary.first(),
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 90.dp)
         ) {

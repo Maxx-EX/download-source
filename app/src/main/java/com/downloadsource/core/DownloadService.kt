@@ -18,7 +18,6 @@ class DownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 修复核心：第一时间启动前台，防止 5 秒超时闪退！
         try {
             val channelId = CHANNEL_ID
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -30,22 +29,16 @@ class DownloadService : Service() {
             val openIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notif = NotificationCompat.Builder(this, channelId)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle("Download source 正在运行 (●'◡'●)")
-                .setContentText("保障下载不掉线")
-                .setContentIntent(openIntent)
-                .setOngoing(true).setOnlyAlertOnce(true)
-                .build()
+                .setContentTitle("Download source 正在运行")
+                .setContentText("保障下载不掉线 (●'◡'●)")
+                .setContentIntent(openIntent).setOngoing(true).setOnlyAlertOnce(true).build()
             startForeground(NOTIF_ID, notif)
         } catch (e: Exception) { }
 
-        // 再去获取唤醒锁
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DownloadSource::WakeLock").apply {
-                acquire(10 * 60 * 1000L)
-            }
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DownloadSource::WakeLock").apply { acquire(10 * 60 * 1000L) }
         } catch (e: Exception) { }
-
         return START_STICKY
     }
 
@@ -59,14 +52,11 @@ class DownloadService : Service() {
         const val NOTIF_ID = 1001
         fun start(context: Context) {
             val intent = Intent(context, DownloadService::class.java)
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
-            } catch (e: Exception) { }
+            try { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent) } catch (e: Exception) { }
         }
-        fun stop(context: Context) { 
-            try { context.stopService(Intent(context, DownloadService::class.java)) } catch (e: Exception) {}
-        }
+        fun stop(context: Context) { try { context.stopService(Intent(context, DownloadService::class.java)) } catch (e: Exception) {} }
         
+        // 修复：真实更新通知栏进度
         fun updateProgress(context: Context, fileName: String, downloaded: Long, total: Long, speed: Long) {
             try {
                 val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -79,10 +69,9 @@ class DownloadService : Service() {
                 }
                 val notif = NotificationCompat.Builder(context, CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.stat_sys_download)
-                    .setContentTitle(fileName)
-                    .setContentText("$progress% · $speedText")
-                    .setContentIntent(openIntent)
-                    .setOngoing(true).setProgress(100, progress, total <= 0).setOnlyAlertOnce(true).build()
+                    .setContentTitle(fileName).setContentText("$progress% · $speedText")
+                    .setContentIntent(openIntent).setOngoing(true)
+                    .setProgress(100, progress, total <= 0).setOnlyAlertOnce(true).build()
                 mgr.notify(NOTIF_ID, notif)
             } catch (e: Exception) { }
         }

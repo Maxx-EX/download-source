@@ -10,16 +10,29 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 object DownloadManager {
-    val httpClient = OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+    // 修复：OkHttp 单域名并发限制解除，拉满到 32
+    val httpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .connectionPool(okhttp3.ConnectionPool(64, 10, TimeUnit.MINUTES))
+        .dispatcher(Dispatcher().apply { maxRequests = 64; maxRequestsPerHost = 32 })
+        .build()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val segmenter = Segmenter(httpClient)
     private val jobs = mutableMapOf<String, Job>()
     private val mutex = Mutex()
-    var MAX_CONCURRENT = 3
+    
+    // 修复：全局任务并发数，默认 3，可在设置调整
+    var MAX_CONCURRENT = 3 
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -34,7 +47,7 @@ object DownloadManager {
 
     fun add(context: Context, url: String, customName: String?, threads: Int, speedLimitKb: Long, headers: Map<String, String>, baseDir: File) {
         val tempName = customName ?: "parsing_${System.currentTimeMillis()}"
-        val task = DownloadTask(url = url, fileName = tempName, dirPath = baseDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers)
+        val task = DownloadTask(url = url, fileName = tempName, dirPath = baseDir.absolutePath, threads = threads.coerceIn(1, 32), speedLimitKb = speedLimitKb, headers = headers)
         
         scope.launch {
             mutex.withLock { _tasks.value = _tasks.value + task }
@@ -55,19 +68,14 @@ object DownloadManager {
                     if (BuildConfig.CHANNEL == "zeta" || BuildConfig.CHANNEL == "omega") {
                         val results = DiskParser.parse(context, shareInfo)
                         remove(context, task.id)
-                        
                         val newTasks = mutableListOf<DownloadTask>()
                         for (file in results) {
                             val catDir = createCategoryDir(baseDir, file.name)
-                            newTasks.add(DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = threads, speedLimitKb = speedLimitKb, headers = headers))
+                            newTasks.add(DownloadTask(url = file.url, fileName = file.name, dirPath = catDir.absolutePath, threads = 6, speedLimitKb = speedLimitKb, headers = headers))
                         }
-                        
                         mutex.withLock { _tasks.value = _tasks.value + newTasks }
                         TaskStore.save(context, _tasks.value)
-                        
-                        for (newTask in newTasks) {
-                            startTask(context, newTask.id)
-                        }
+                        for (newTask in newTasks) { startTask(context, newTask.id) }
                     }
                     return@launch
                 }
@@ -92,7 +100,6 @@ object DownloadManager {
             "jpg", "jpeg", "png", "gif", "webp", "svg" -> "图片"
             "txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv" -> "文档"
             "zip", "rar", "7z", "tar", "gz" -> "压缩包"
-            "html", "css", "js", "py", "java", "kt", "cpp", "c", "json", "xml" -> "代码"
             else -> "其他"
         }
         return File(baseDir, sub).apply { if (!exists()) mkdirs() }
@@ -101,9 +108,9 @@ object DownloadManager {
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
     
     private fun startTask(context: Context, id: String) {
-        if (_tasks.value.count { it.status == TaskStatus.Running } >= MAX_CONCURRENT) { 
-            updateTaskState(context, id) { it.copy(status = TaskStatus.Pending) }; return 
-        }
+        // 修复：并发限制
+        if (_tasks.value.count { it.status == TaskStatus.Running } >= MAX_CONCURRENT) return
+        
         val t = _tasks.value.find { it.id == id } ?: return
         if (t.status == TaskStatus.Running) return
         
@@ -112,8 +119,11 @@ object DownloadManager {
         
         jobs[id] = scope.launch {
             try {
-                val out = segmenter.download(t.id, t.url, File(t.dirPath), t.fileName, t.threads, t.speedLimitKb, t.headers) { d, total, speed -> 
+                // 修复：直接写最终文件，取消合并阶段！
+                val outFile = File(t.dirPath, t.fileName)
+                val out = segmenter.download(t.id, t.url, outFile, t.threads, t.speedLimitKb, t.headers) { d, total, speed -> 
                     _tasks.value = _tasks.value.map { if (it.id == id) it.copy(downloadedBytes = d, totalBytes = total, speed = speed) else it } 
+                    DownloadService.updateProgress(context, t.fileName, d, total, speed)
                 }
                 updateTaskState(context, id) { it.copy(status = TaskStatus.Completed, downloadedBytes = it.totalBytes, speed = 0, outputPath = out.absolutePath) }
                 
@@ -124,34 +134,27 @@ object DownloadManager {
                     } catch (e: Exception) {}
                 }
                 checkPending(context)
+            } catch (e: CancellationException) {
+                // 修复：协程取消时，标记为暂停，而不是失败！
+                updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
+                throw e
             } catch (e: Exception) { 
                 updateTaskState(context, id) { it.copy(status = TaskStatus.Failed, error = e.message) }; checkPending(context) 
             }
         }
     }
     
-    // 修复：移入保险箱，将 withContext 替换为 Handler
     fun moveToVault(context: Context, id: String) {
         val t = _tasks.value.find { it.id == id } ?: return
         val srcFile = File(t.outputPath ?: return)
         if (srcFile.exists()) {
-            val vaultDir = File(t.dirPath).parentFile?.let { File(it, ".vault") } ?: return
+            val vaultDir = File(DirStore.resolveDownloadDir(context), ".vault")
             if (!vaultDir.exists()) vaultDir.mkdirs()
             val destFile = File(vaultDir, t.fileName)
             if (srcFile.renameTo(destFile)) {
                 _tasks.value = _tasks.value.filterNot { it.id == id }
                 TaskStore.save(context, _tasks.value)
-                Handler(Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(context, "已移入保险箱 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                Handler(Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(context, "移入失败 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        } else {
-            Handler(Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(context, "文件不存在 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show()
+                Handler(Looper.getMainLooper()).post { android.widget.Toast.makeText(context, "已移入保险箱 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -167,10 +170,30 @@ object DownloadManager {
         _tasks.value.filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Paused }.forEach { startTask(context, it.id) }
     }
 
-    fun pause(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) } }
-    fun remove(context: Context, id: String) { segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id); _tasks.value = _tasks.value.filterNot { it.id == id }; TaskStore.save(context, _tasks.value) }
-    private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }; TaskStore.save(context, _tasks.value) }
-    private fun checkPending(context: Context) { if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } }
+    fun pause(context: Context, id: String) { 
+        segmenter.cancelTask(id)
+        jobs[id]?.cancel(); jobs.remove(id)
+        // 立即更新状态
+        updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
+        checkPending(context)
+    }
+    
+    fun remove(context: Context, id: String) { 
+        segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id)
+        _tasks.value = _tasks.value.filterNot { it.id == id }
+        TaskStore.save(context, _tasks.value) 
+        checkPending(context)
+    }
+    
+    private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { 
+        _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }
+        TaskStore.save(context, _tasks.value) 
+    }
+    
+    private fun checkPending(context: Context) { 
+        if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) 
+        else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } 
+    }
 
     private fun probeRealFileName(url: String, headers: Map<String, String>): String {
         try {
@@ -187,65 +210,9 @@ object DownloadManager {
                 val path = resp.request.url.encodedPath
                 var last = path.substringAfterLast('/')
                 if (last.isNotBlank() && last.contains('.')) return java.net.URLDecoder.decode(last, "UTF-8")
-                
-                val mime = resp.header("Content-Type") ?: ""
-                val ext = mimeToExtension(mime)
-                
                 if (last.isBlank()) last = "download_${System.currentTimeMillis()}"
-                return "$last$ext"
+                return "$last.bin"
             }
         } catch (e: Exception) { return "file_${System.currentTimeMillis()}.bin" }
-    }
-
-    private fun mimeToExtension(mime: String): String {
-        val m = mime.lowercase()
-        return when {
-            m.contains("video/mp4") -> ".mp4"
-            m.contains("video/mpeg") -> ".mpeg"
-            m.contains("video/quicktime") -> ".mov"
-            m.contains("video/x-msvideo") -> ".avi"
-            m.contains("video/x-matroska") -> ".mkv"
-            m.contains("video/webm") -> ".webm"
-            m.contains("video/x-flv") -> ".flv"
-            m.contains("video/mp2t") -> ".ts"
-            m.contains("audio/mpeg") -> ".mp3"
-            m.contains("audio/mp4") -> ".m4a"
-            m.contains("audio/aac") -> ".aac"
-            m.contains("audio/x-wav") -> ".wav"
-            m.contains("audio/flac") -> ".flac"
-            m.contains("audio/ogg") -> ".ogg"
-            m.contains("application/vnd.android.package-archive") -> ".apk"
-            m.contains("application/x-msdownload") -> ".exe"
-            m.contains("application/zip") -> ".zip"
-            m.contains("application/x-rar-compressed") -> ".rar"
-            m.contains("application/x-7z-compressed") -> ".7z"
-            m.contains("application/x-tar") -> ".tar"
-            m.contains("application/gzip") -> ".gz"
-            m.contains("text/plain") -> ".txt"
-            m.contains("text/html") -> ".html"
-            m.contains("text/css") -> ".css"
-            m.contains("application/javascript") -> ".js"
-            m.contains("application/json") -> ".json"
-            m.contains("application/xml") -> ".xml"
-            m.contains("application/pdf") -> ".pdf"
-            m.contains("application/msword") -> ".doc"
-            m.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document") -> ".docx"
-            m.contains("application/vnd.ms-excel") -> ".xls"
-            m.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") -> ".xlsx"
-            m.contains("application/vnd.ms-powerpoint") -> ".ppt"
-            m.contains("application/vnd.openxmlformats-officedocument.presentationml.presentation") -> ".pptx"
-            m.contains("application/vnd.oasis.opendocument.text") -> ".odt"
-            m.contains("image/jpeg") -> ".jpg"
-            m.contains("image/png") -> ".png"
-            m.contains("image/gif") -> ".gif"
-            m.contains("image/webp") -> ".webp"
-            m.contains("image/svg+xml") -> ".svg"
-            m.contains("image/x-icon") -> ".ico"
-            m.contains("text/x-python") -> ".py"
-            m.contains("text/x-java") -> ".java"
-            m.contains("text/x-c") -> ".c"
-            m.contains("text/x-c++") -> ".cpp"
-            else -> ".bin" 
-        }
     }
 }

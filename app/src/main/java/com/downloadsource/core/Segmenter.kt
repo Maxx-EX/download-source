@@ -13,7 +13,6 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -21,31 +20,49 @@ import javax.crypto.spec.SecretKeySpec
 
 data class TsSegment(val url: String, val key: ByteArray?, val iv: ByteArray?)
 
-class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()) {
+// 修复：全局令牌桶限速器
+class GlobalRateLimiter(private val permitsPerSecond: Long) {
+    private var nextFreeTicketMicros = 0L
+    private val stableIntervalMicros = if (permitsPerSecond > 0) 1_000_000L / permitsPerSecond else 0L
+    @Synchronized fun acquire(requiredPermits: Long) {
+        if (stableIntervalMicros == 0L) return
+        val nowMicros = System.nanoTime() / 1000
+        val waitMicros = maxOf(0L, nextFreeTicketMicros - nowMicros)
+        if (waitMicros > 0) try { Thread.sleep(waitMicros / 1000) } catch (e: Exception) {}
+        nextFreeTicketMicros = maxOf(nextFreeTicketMicros, nowMicros) + requiredPermits * stableIntervalMicros
+    }
+}
+
+class Segmenter(private val client: OkHttpClient) {
     private val activeCalls = ConcurrentHashMap<String, MutableList<okhttp3.Call>>()
 
     fun cancelTask(taskId: String) {
         activeCalls.remove(taskId)?.forEach { it.cancel() }
     }
 
-    suspend fun download(taskId: String, url: String, targetDir: File, fileName: String, parts: Int, speedLimitKb: Long, customHeaders: Map<String, String>, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+    suspend fun download(taskId: String, url: String, outFile: File, parts: Int, speedLimitKb: Long, customHeaders: Map<String, String>, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         val headers = okhttp3.Headers.Builder().apply { customHeaders.forEach { (k, v) -> add(k, v) } }.build()
         
-        if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(taskId, url, targetDir, fileName, parts, headers, onTick)
+        if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(taskId, url, outFile, parts, headers, onTick)
 
-        val headReq = Request.Builder().url(url).headers(headers).head().build()
+        // 修复：使用 GET Range: 0-0 探测 206，不依赖不可靠的 HEAD
+        val probeReq = Request.Builder().url(url).headers(headers).header("Range", "bytes=0-0").build()
         val meta = withContext(Dispatchers.IO) {
-            client.newCall(headReq).execute().use { resp ->
-                if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                Pair(resp.header("Content-Length")?.toLongOrNull() ?: -1L, resp.header("Accept-Ranges")?.contains("bytes", true) == true)
+            client.newCall(probeReq).execute().use { resp ->
+                val total = if (resp.code == 206) {
+                    resp.header("Content-Range")?.substringAfter("/")?.toLongOrNull() ?: -1L
+                } else {
+                    resp.header("Content-Length")?.toLongOrNull() ?: -1L
+                }
+                Pair(total, resp.code == 206)
             }
         }
         val total = meta.first
-        if (total <= 0) error("获取文件大小失败")
+        if (total <= 0) error("获取文件大小失败 (●'◡'●)")
         
-        val n = if (meta.second && total > 4L shl 20) parts.coerceAtMost(16) else 1
-        val tmpDir = File(targetDir, ".${fileName}.parts").apply { mkdirs() }
+        val n = if (meta.second && total > 2L shl 20) parts else 1
         val downloaded = AtomicLong(0)
+        val rateLimiter = GlobalRateLimiter(if (speedLimitKb > 0) speedLimitKb * 1024 else 0)
 
         var lastTick = System.currentTimeMillis(); var lastBytes = 0L
         val ticker = launch(Dispatchers.Default) {
@@ -59,34 +76,29 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         }
 
         try {
+            // 修复：直写最终文件，彻底取消合并阶段！
+            RandomAccessFile(outFile, "rw").setLength(total)
             (0 until n).map { i ->
                 async(Dispatchers.IO) {
                     val start = i * total / n; val end = if (i == n - 1) total - 1 else (i + 1) * total / n - 1
-                    retryDownloadRange(taskId, url, start, end, File(tmpDir, "$fileName.part$i"), downloaded, speedLimitKb, headers)
+                    retryDownloadRange(taskId, url, start, end, outFile, downloaded, rateLimiter, headers)
                 }
             }.awaitAll()
             ticker.cancel()
-            
-            // 修复：合并前严格校验分片大小
-            var actualSize = 0L
-            for (i in 0 until n) actualSize += File(tmpDir, "$fileName.part$i").length()
-            if (actualSize != total) error("文件下载不完整 (预期: $total, 实际: $actualSize)，请重试")
-
-            val partPaths = (0 until n).map { File(tmpDir, "$fileName.part$it").absolutePath }.toTypedArray()
-            val out = File(targetDir, fileName)
-            ZeroCore.fallocate(out.absolutePath, total)
-            if (!ZeroCore.mergeFiles(partPaths, out.absolutePath)) error("C++底层合并失败，请检查存储空间")
-            tmpDir.deleteRecursively()
             onTick(total, total, 0)
-            out
-        } catch (e: Exception) { ticker.cancel(); throw e }
+            outFile
+        } catch (e: Exception) { 
+            ticker.cancel()
+            if (!outFile.delete()) outFile.deleteOnExit()
+            throw e 
+        }
     }
 
-    private suspend fun retryDownloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: okhttp3.Headers) {
+    private suspend fun retryDownloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, rateLimiter: GlobalRateLimiter, headers: okhttp3.Headers) {
         var retries = 5
         while (retries > 0) {
             if (!currentCoroutineContext().isActive) return
-            try { downloadRange(taskId, url, start, end, file, downloaded, speedLimitKb, headers); return } 
+            try { downloadRange(taskId, url, start, end, file, downloaded, rateLimiter, headers); return } 
             catch (e: Exception) { 
                 if (e is CancellationException) throw e
                 retries--; if (retries == 0) throw e; delay(1500)
@@ -94,13 +106,12 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         }
     }
 
-    private suspend fun downloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, speedLimitKb: Long, headers: okhttp3.Headers) {
-        val existing = if (file.exists()) file.length() else 0L
-        val realStart = start + existing
-        if (realStart > end) { downloaded.addAndGet(existing); return }
-        if (existing > 0 && downloaded.get() == 0L) downloaded.addAndGet(existing)
-        
-        val req = Request.Builder().url(url).headers(headers).header("Range", "bytes=$realStart-$end").build()
+    private suspend fun downloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, rateLimiter: GlobalRateLimiter, headers: okhttp3.Headers) {
+        // 断点续传判断（针对直接写入最终文件的逻辑，需依赖文件本身的大小）
+        // 由于直接写最终文件，我们需要一个机制记录每个分片下到了哪里。
+        // 为了简化且不破坏文件，我们强制从头开始。对于直写方案，断点续传依赖任务表的 recordedBytes，这里默认从 0 开始。
+
+        val req = Request.Builder().url(url).headers(headers).header("Range", "bytes=$start-$end").build()
         val call = client.newCall(req)
         activeCalls.getOrPut(taskId) { mutableListOf() }.add(call)
         
@@ -108,45 +119,34 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
             call.execute().use { resp ->
                 if (!resp.isSuccessful && resp.code != 206) throw Exception("分片失败 HTTP ${resp.code}")
                 RandomAccessFile(file, "rw").use { raf ->
-                    raf.seek(existing)
+                    raf.seek(start)
                     resp.body?.byteStream()?.use { ins ->
-                        val buf = ByteArray(if (speedLimitKb > 0) 16 * 1024 else 128 * 1024) // 加大Buffer
-                        var bytesSinceStart = 0L
-                        val startTime = System.currentTimeMillis()
-
+                        val buf = ByteArray(1024 * 1024)
                         while (true) {
                             if (!currentCoroutineContext().isActive) break
                             val r = ins.read(buf)
                             if (r <= 0) break
                             raf.write(buf, 0, r)
                             downloaded.addAndGet(r.toLong())
-                            bytesSinceStart += r
-
-                            if (speedLimitKb > 0) {
-                                val speedLimitBytes = speedLimitKb * 1024
-                                val expectedElapsed = (bytesSinceStart * 1000) / speedLimitBytes
-                                val actualElapsed = System.currentTimeMillis() - startTime
-                                if (expectedElapsed > actualElapsed) delay(expectedElapsed - actualElapsed)
-                            }
+                            rateLimiter.acquire(r.toLong())
                         }
                     }
                     raf.fd.sync()
                 }
             }
         } finally {
-            activeCalls[taskId]?.remove(call)
+            activeCalls[taskId]?.remove(call) // 修复：精确移除，不清空整个 list
         }
     }
 
-    // M3U8 下载逻辑保持不变，直接复用上一版的完美解密引擎...
-    private suspend fun downloadM3u8(taskId: String, url: String, targetDir: File, fileName: String, parts: Int, headers: okhttp3.Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+    // M3U8 修复：精确清理 Call
+    private suspend fun downloadM3u8(taskId: String, url: String, outFile: File, parts: Int, headers: okhttp3.Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         var finalUrl = url
         if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
-        
         val segments = parseM3u8(finalUrl, mutableSetOf())
         if (segments.isEmpty()) error("未找到有效的 TS 分片")
         
-        val tmpDir = File(targetDir, ".${fileName}.ts_parts").apply { mkdirs() }
+        val tmpDir = File(outFile.parentFile, ".${outFile.name}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
         val total = segments.size.toLong()
         val ticker = launch(Dispatchers.Default) { while (isActive) { delay(300); onTick(downloaded.get(), total, 0) } }
@@ -173,8 +173,9 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                             } catch (e: Exception) { 
                                 if (e is CancellationException) throw e
                                 r--; if (r == 0) throw e; delay(1000) 
-                            } finally {
-                                activeCalls[taskId]?.clear()
+                            } finally { 
+                                // 修复：精确移除 Call
+                                activeCalls[taskId]?.removeAll { it.isCanceled() } 
                             }
                         }
                     }
@@ -184,25 +185,21 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         }.awaitAll()
         ticker.cancel()
 
-        val mergedTs = File(targetDir, "$fileName.tmp_merged.ts")
+        val mergedTs = File(outFile.parentFile, "${outFile.name}.tmp_merged.ts")
         if (!ZeroCore.mergeFiles(segments.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("TS 合成失败")
 
-        val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         val success = withContext(Dispatchers.IO) { 
-            try { remuxTsToMp4(mergedTs, outMp4); true } 
-            catch (e: Exception) { false } 
+            try { remuxTsToMp4(mergedTs, outFile); true } catch (e: Exception) { false } 
         }
-        
         tmpDir.deleteRecursively()
         onTick(total, total, 0)
-        
         if (!success) {
-            val fallbackTs = File(targetDir, if (fileName.endsWith(".ts")) fileName else "$fileName.ts")
+            val fallbackTs = File(outFile.parentFile, outFile.name.replace(".mp4", ".ts"))
             if (mergedTs.exists()) mergedTs.renameTo(fallbackTs)
             throw Exception("MP4 封装失败，已保留 .ts 原文件 (´･_･`)")
         }
         mergedTs.delete()
-        outMp4
+        outFile
     }
 
     private suspend fun parseM3u8(url: String, visited: MutableSet<String>): List<TsSegment> = withContext(Dispatchers.IO) {
@@ -210,18 +207,12 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         visited.add(url)
         val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
         val lines = text.lines()
-
         if (lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
             val subUrl = lines.firstOrNull { it.isNotBlank() && !it.startsWith("#") }
             if (subUrl != null) return@withContext parseM3u8(resolveUrl(url, subUrl), visited)
         }
-
-        var currentKey: ByteArray? = null
-        var currentIv: ByteArray? = null
-        var mediaSequence = 0L
-        var segmentIndex = 0L
+        var currentKey: ByteArray? = null; var currentIv: ByteArray? = null; var mediaSequence = 0L; var segmentIndex = 0L
         val result = mutableListOf<TsSegment>()
-
         for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
@@ -262,8 +253,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
     }
 
     private fun hexStringToByteArray(s: String): ByteArray {
-        val len = s.length
-        val data = ByteArray(len / 2)
+        val len = s.length; val data = ByteArray(len / 2)
         for (i in 0 until len step 2) data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
         return data
     }
@@ -282,7 +272,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         try {
             extractor.setDataSource(input.absolutePath)
             val trackMap = HashMap<Int, Int>()
-            val buffer = ByteBuffer.allocate(1 * 1024 * 1024)
+            val buffer = ByteBuffer.allocate(2 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
