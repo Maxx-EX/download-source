@@ -20,7 +20,6 @@ import javax.crypto.spec.SecretKeySpec
 
 data class TsSegment(val url: String, val key: ByteArray?, val iv: ByteArray?)
 
-// 修复：全局令牌桶限速器
 class GlobalRateLimiter(private val permitsPerSecond: Long) {
     private var nextFreeTicketMicros = 0L
     private val stableIntervalMicros = if (permitsPerSecond > 0) 1_000_000L / permitsPerSecond else 0L
@@ -45,22 +44,15 @@ class Segmenter(private val client: OkHttpClient) {
         
         if (url.contains(".m3u8") || url.endsWith(".ts", true)) return@coroutineScope downloadM3u8(taskId, url, outFile, parts, headers, onTick)
 
-        // 修复：使用 GET Range: 0-0 探测 206，不依赖不可靠的 HEAD
-        val probeReq = Request.Builder().url(url).headers(headers).header("Range", "bytes=0-0").build()
-        val meta = withContext(Dispatchers.IO) {
-            client.newCall(probeReq).execute().use { resp ->
-                val total = if (resp.code == 206) {
-                    resp.header("Content-Range")?.substringAfter("/")?.toLongOrNull() ?: -1L
-                } else {
-                    resp.header("Content-Length")?.toLongOrNull() ?: -1L
-                }
-                Pair(total, resp.code == 206)
-            }
-        }
-        val total = meta.first
-        if (total <= 0) error("获取文件大小失败 (●'◡'●)")
+        // 核心修复：智能探测文件大小与 Range 支持
+        val (total, supportsRange) = probeFileSize(url, headers)
         
-        val n = if (meta.second && total > 2L shl 20) parts else 1
+        // 如果探测不到大小，直接降级为流式下载，绝不报错
+        if (total <= 0) {
+            return@coroutineScope streamDownload(taskId, url, outFile, headers, onTick)
+        }
+        
+        val n = if (supportsRange && total > 2L shl 20) parts else 1
         val downloaded = AtomicLong(0)
         val rateLimiter = GlobalRateLimiter(if (speedLimitKb > 0) speedLimitKb * 1024 else 0)
 
@@ -76,7 +68,6 @@ class Segmenter(private val client: OkHttpClient) {
         }
 
         try {
-            // 修复：直写最终文件，彻底取消合并阶段！
             RandomAccessFile(outFile, "rw").setLength(total)
             (0 until n).map { i ->
                 async(Dispatchers.IO) {
@@ -94,6 +85,79 @@ class Segmenter(private val client: OkHttpClient) {
         }
     }
 
+    // 三重探测机制：HEAD -> GET 0-0 -> 放弃探测直接流式
+    private suspend fun probeFileSize(url: String, headers: okhttp3.Headers): Pair<Long, Boolean> = withContext(Dispatchers.IO) {
+        // 1. 尝试 HEAD
+        try {
+            val headReq = Request.Builder().url(url).headers(headers).head().build()
+            client.newCall(headReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val len = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+                    val range = resp.header("Accept-Ranges")?.contains("bytes", true) == true
+                    if (len > 0) return@withContext Pair(len, range)
+                }
+            }
+        } catch (e: Exception) {}
+
+        // 2. 尝试 GET Range: 0-0
+        try {
+            val rangeReq = Request.Builder().url(url).headers(headers).header("Range", "bytes=0-0").build()
+            client.newCall(rangeReq).execute().use { resp ->
+                if (resp.code == 206) {
+                    val contentRange = resp.header("Content-Range")
+                    val len = contentRange?.substringAfter("/")?.toLongOrNull() ?: -1L
+                    if (len > 0) return@withContext Pair(len, true)
+                } else if (resp.isSuccessful) {
+                    // 如果服务器强行返回 200，说明不支持 Range，但可能拿到了长度
+                    val len = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+                    if (len > 0) return@withContext Pair(len, false)
+                }
+            }
+        } catch (e: Exception) {}
+
+        return@withContext Pair(-1L, false)
+    }
+
+    // 修复：没有大小信息时的流式下载
+    private suspend fun streamDownload(taskId: String, url: String, outFile: File, headers: okhttp3.Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
+        val req = Request.Builder().url(url).headers(headers).build()
+        val call = client.newCall(req)
+        activeCalls.getOrPut(taskId) { mutableListOf() }.add(call)
+        
+        try {
+            withContext(Dispatchers.IO) {
+                call.execute().use { resp ->
+                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                    val total = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+                    resp.body?.byteStream()?.use { ins ->
+                        outFile.outputStream().use { out ->
+                            val buf = ByteArray(1024 * 1024)
+                            var downloaded = 0L
+                            var lastTick = System.currentTimeMillis()
+                            while (true) {
+                                if (!isActive) break
+                                val r = ins.read(buf)
+                                if (r <= 0) break
+                                out.write(buf, 0, r)
+                                downloaded += r
+                                val now = System.currentTimeMillis()
+                                if (now - lastTick > 300) {
+                                    onTick(downloaded, if (total > 0) total else 0L, 0L)
+                                    lastTick = now
+                                }
+                            }
+                            out.fd.sync()
+                        }
+                    }
+                }
+            }
+            onTick(outFile.length(), outFile.length(), 0L)
+            outFile
+        } finally {
+            activeCalls[taskId]?.remove(call)
+        }
+    }
+
     private suspend fun retryDownloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, rateLimiter: GlobalRateLimiter, headers: okhttp3.Headers) {
         var retries = 5
         while (retries > 0) {
@@ -107,10 +171,6 @@ class Segmenter(private val client: OkHttpClient) {
     }
 
     private suspend fun downloadRange(taskId: String, url: String, start: Long, end: Long, file: File, downloaded: AtomicLong, rateLimiter: GlobalRateLimiter, headers: okhttp3.Headers) {
-        // 断点续传判断（针对直接写入最终文件的逻辑，需依赖文件本身的大小）
-        // 由于直接写最终文件，我们需要一个机制记录每个分片下到了哪里。
-        // 为了简化且不破坏文件，我们强制从头开始。对于直写方案，断点续传依赖任务表的 recordedBytes，这里默认从 0 开始。
-
         val req = Request.Builder().url(url).headers(headers).header("Range", "bytes=$start-$end").build()
         val call = client.newCall(req)
         activeCalls.getOrPut(taskId) { mutableListOf() }.add(call)
@@ -135,16 +195,15 @@ class Segmenter(private val client: OkHttpClient) {
                 }
             }
         } finally {
-            activeCalls[taskId]?.remove(call) // 修复：精确移除，不清空整个 list
+            activeCalls[taskId]?.remove(call)
         }
     }
 
-    // M3U8 修复：精确清理 Call
     private suspend fun downloadM3u8(taskId: String, url: String, outFile: File, parts: Int, headers: okhttp3.Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         var finalUrl = url
         if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
         val segments = parseM3u8(finalUrl, mutableSetOf())
-        if (segments.isEmpty()) error("未找到有效的 TS 分片")
+        if (segments.isEmpty()) error("未找到有效的 TS 分片 (´･_･`)")
         
         val tmpDir = File(outFile.parentFile, ".${outFile.name}.ts_parts").apply { mkdirs() }
         val downloaded = AtomicLong(0)
@@ -174,7 +233,6 @@ class Segmenter(private val client: OkHttpClient) {
                                 if (e is CancellationException) throw e
                                 r--; if (r == 0) throw e; delay(1000) 
                             } finally { 
-                                // 修复：精确移除 Call
                                 activeCalls[taskId]?.removeAll { it.isCanceled() } 
                             }
                         }
