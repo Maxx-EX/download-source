@@ -1,6 +1,8 @@
 package com.downloadsource.core
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.downloadsource.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -128,7 +130,7 @@ object DownloadManager {
         }
     }
     
-    // 新增：移入保险箱
+    // 修复：移入保险箱，将 withContext 替换为 Handler
     fun moveToVault(context: Context, id: String) {
         val t = _tasks.value.find { it.id == id } ?: return
         val srcFile = File(t.outputPath ?: return)
@@ -139,9 +141,17 @@ object DownloadManager {
             if (srcFile.renameTo(destFile)) {
                 _tasks.value = _tasks.value.filterNot { it.id == id }
                 TaskStore.save(context, _tasks.value)
-                withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已移入保险箱 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
+                Handler(Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(context, "已移入保险箱 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } else {
-                withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "移入失败 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show() }
+                Handler(Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(context, "移入失败 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else {
+            Handler(Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(context, "文件不存在 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -162,7 +172,6 @@ object DownloadManager {
     private fun updateTaskState(context: Context, id: String, block: (DownloadTask) -> DownloadTask) { _tasks.value = _tasks.value.map { if (it.id == id) block(it) else it }; TaskStore.save(context, _tasks.value) }
     private fun checkPending(context: Context) { if (_tasks.value.none { it.status == TaskStatus.Running || it.status == TaskStatus.Pending }) DownloadService.stop(context) else { _tasks.value.firstOrNull { it.status == TaskStatus.Pending }?.let { startTask(context, it.id) } } }
 
-    // 核心：超全格式识别 (包含500+常见后缀，这里映射常用主类并兜底识别)
     private fun probeRealFileName(url: String, headers: Map<String, String>): String {
         try {
             if (url.contains(".m3u8")) return "video_${System.currentTimeMillis()}.mp4"
@@ -191,7 +200,6 @@ object DownloadManager {
     private fun mimeToExtension(mime: String): String {
         val m = mime.lowercase()
         return when {
-            // 视频
             m.contains("video/mp4") -> ".mp4"
             m.contains("video/mpeg") -> ".mpeg"
             m.contains("video/quicktime") -> ".mov"
@@ -200,14 +208,12 @@ object DownloadManager {
             m.contains("video/webm") -> ".webm"
             m.contains("video/x-flv") -> ".flv"
             m.contains("video/mp2t") -> ".ts"
-            // 音频
             m.contains("audio/mpeg") -> ".mp3"
             m.contains("audio/mp4") -> ".m4a"
             m.contains("audio/aac") -> ".aac"
             m.contains("audio/x-wav") -> ".wav"
             m.contains("audio/flac") -> ".flac"
             m.contains("audio/ogg") -> ".ogg"
-            // 应用与压缩
             m.contains("application/vnd.android.package-archive") -> ".apk"
             m.contains("application/x-msdownload") -> ".exe"
             m.contains("application/zip") -> ".zip"
@@ -215,7 +221,6 @@ object DownloadManager {
             m.contains("application/x-7z-compressed") -> ".7z"
             m.contains("application/x-tar") -> ".tar"
             m.contains("application/gzip") -> ".gz"
-            // 文档
             m.contains("text/plain") -> ".txt"
             m.contains("text/html") -> ".html"
             m.contains("text/css") -> ".css"
@@ -230,19 +235,16 @@ object DownloadManager {
             m.contains("application/vnd.ms-powerpoint") -> ".ppt"
             m.contains("application/vnd.openxmlformats-officedocument.presentationml.presentation") -> ".pptx"
             m.contains("application/vnd.oasis.opendocument.text") -> ".odt"
-            // 图片
             m.contains("image/jpeg") -> ".jpg"
             m.contains("image/png") -> ".png"
             m.contains("image/gif") -> ".gif"
             m.contains("image/webp") -> ".webp"
             m.contains("image/svg+xml") -> ".svg"
             m.contains("image/x-icon") -> ".ico"
-            // 代码
             m.contains("text/x-python") -> ".py"
             m.contains("text/x-java") -> ".java"
             m.contains("text/x-c") -> ".c"
             m.contains("text/x-c++") -> ".cpp"
-            // 兜底，如果实在不知道，尝试从 URL 取，如果还没有就返回 .bin
             else -> ".bin" 
         }
     }
