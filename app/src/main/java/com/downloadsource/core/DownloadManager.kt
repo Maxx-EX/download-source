@@ -128,6 +128,24 @@ object DownloadManager {
         }
     }
     
+    // 新增：移入保险箱
+    fun moveToVault(context: Context, id: String) {
+        val t = _tasks.value.find { it.id == id } ?: return
+        val srcFile = File(t.outputPath ?: return)
+        if (srcFile.exists()) {
+            val vaultDir = File(t.dirPath).parentFile?.let { File(it, ".vault") } ?: return
+            if (!vaultDir.exists()) vaultDir.mkdirs()
+            val destFile = File(vaultDir, t.fileName)
+            if (srcFile.renameTo(destFile)) {
+                _tasks.value = _tasks.value.filterNot { it.id == id }
+                TaskStore.save(context, _tasks.value)
+                withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "已移入保险箱 (๑•̀ㅂ•́)و✧", android.widget.Toast.LENGTH_SHORT).show() }
+            } else {
+                withContext(Dispatchers.Main) { android.widget.Toast.makeText(context, "移入失败 (´･_･`)", android.widget.Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
     fun rename(context: Context, id: String, newName: String) {
         val t = _tasks.value.find { it.id == id } ?: return
         val dir = File(t.dirPath); val oldFile = File(dir, t.fileName); val newFile = File(dir, newName)

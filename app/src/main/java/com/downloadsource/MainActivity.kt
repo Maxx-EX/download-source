@@ -268,6 +268,10 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
     var filterMode by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "下载中", "已完成", "失败")
 
+    // 多选模式状态
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedTasks = remember { mutableStateListOf<String>() }
+
     val shortcuts = listOf(
         Pair("哔哩哔哩", "https://m.bilibili.com"),
         Pair("知乎", "https://www.zhihu.com"),
@@ -290,7 +294,6 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
                     "Google" -> "https://www.google.com/search?q=$encoded"
                     else -> "https://www.bing.com/search?q=$encoded"
                 }
-                // 修复：改为在内置浏览器打开
                 onOpenBrowserUrl(url)
             }
         }
@@ -301,63 +304,81 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
-                        Spacer(Modifier.width(8.dp))
-                        Box(Modifier.background(if (BuildConfig.CHANNEL == "zeta") Color.Red else Color(0xFF3B82F6), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                            Text(if (BuildConfig.CHANNEL == "zeta") "内测" else "发行", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text(if (isSelectionMode) "已选择 ${selectedTasks.size} 项" else "Download source", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = palette.onSurface)
+                        if (!isSelectionMode) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.background(if (BuildConfig.CHANNEL == "zeta") Color.Red else Color(0xFF3B82F6), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                Text(if (BuildConfig.CHANNEL == "zeta") "内测" else "发行", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                     Text("${BuildConfig.CHANNEL.uppercase()} · v${BuildConfig.VERSION_NAME}", color = palette.onSurfaceDim, style = MaterialTheme.typography.bodySmall)
                 }
                 
-                IconButton(onClick = { ctx.startActivity(Intent(ctx, NetDiskActivity::class.java)) }) { Icon(Icons.Default.Cloud, "网盘解析", tint = palette.primary.first()) }
-                IconButton(onClick = { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }) { Icon(Icons.Default.Settings, null, tint = palette.onSurface) }
-            }
-            Spacer(Modifier.height(16.dp))
-            
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(horizontal = 16.dp, vertical = 4.dp)) {
-                Icon(Icons.Default.Search, null, tint = palette.onSurfaceDim)
-                BasicTextField(
-                    value = searchQuery, onValueChange = { searchQuery = it }, textStyle = TextStyle(color = palette.onSurface),
-                    cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
-                    decorationBox = { inner -> if (searchQuery.isEmpty()) Text("输入链接或搜索关键词... (●'◡'●)", color = palette.onSurfaceDim); inner() },
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { doSearch() }) { Icon(Icons.Default.ArrowForward, null, tint = palette.primary.first()) }
+                if (isSelectionMode) {
+                    // 一键移入保险箱按钮
+                    IconButton(onClick = {
+                        selectedTasks.forEach { DownloadManager.moveToVault(ctx, it) }
+                        selectedTasks.clear(); isSelectionMode = false
+                    }) { Icon(Icons.Default.Lock, "移入保险箱", tint = palette.primary.first()) }
+                    
+                    IconButton(onClick = {
+                        selectedTasks.forEach { DownloadManager.remove(ctx, it) }
+                        selectedTasks.clear(); isSelectionMode = false
+                    }) { Icon(Icons.Default.Delete, "删除", tint = Color.Red) }
+                    
+                    IconButton(onClick = { isSelectionMode = false; selectedTasks.clear() }) { Icon(Icons.Default.Close, "取消", tint = palette.onSurface) }
+                } else {
+                    if (tasks.isNotEmpty()) IconButton(onClick = { isSelectionMode = true }) { Icon(Icons.Default.Checklist, "多选", tint = palette.onSurface) }
+                    IconButton(onClick = { ctx.startActivity(Intent(ctx, NetDiskActivity::class.java)) }) { Icon(Icons.Default.Cloud, "网盘", tint = palette.primary.first()) }
+                    IconButton(onClick = { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }) { Icon(Icons.Default.Settings, "设置", tint = palette.onSurface) }
                 }
             }
-            
             Spacer(Modifier.height(16.dp))
             
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(shortcuts) { item ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { 
-                        // 修复：内置浏览器加载
-                        onOpenBrowserUrl(item.second) 
-                    }.padding(8.dp)) {
-                        Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
-                            Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
+            if (!isSelectionMode) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.surface).padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Icon(Icons.Default.Search, null, tint = palette.onSurfaceDim)
+                    BasicTextField(
+                        value = searchQuery, onValueChange = { searchQuery = it }, textStyle = TextStyle(color = palette.onSurface),
+                        cursorBrush = SolidColor(palette.primary.first()), singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { doSearch() }),
+                        decorationBox = { inner -> if (searchQuery.isEmpty()) Text("输入链接或搜索关键词... (●'◡'●)", color = palette.onSurfaceDim); inner() },
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { doSearch() }) { Icon(Icons.Default.ArrowForward, null, tint = palette.primary.first()) }
+                    }
+                }
+                
+                Spacer(Modifier.height(16.dp))
+                
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(shortcuts) { item ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { 
+                            onOpenBrowserUrl(item.second) 
+                        }.padding(8.dp)) {
+                            Box(Modifier.size(48.dp).clip(CircleShape).background(palette.primary.first().copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                                Text(item.first.take(1), color = palette.primary.first(), fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(item.first, style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
                         }
-                        Spacer(Modifier.height(4.dp))
-                        Text(item.first, style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
                     }
                 }
-            }
-            
-            Spacer(Modifier.height(16.dp))
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                filters.forEach { f ->
-                    val selected = filterMode == f
-                    Box(Modifier.clip(RoundedCornerShape(50)).background(if (selected) palette.primary.first() else palette.surface).clickable { filterMode = f }.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text(f, color = if (selected) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                
+                Spacer(Modifier.height(16.dp))
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    filters.forEach { f ->
+                        val selected = filterMode == f
+                        Box(Modifier.clip(RoundedCornerShape(50)).background(if (selected) palette.primary.first() else palette.surface).clickable { filterMode = f }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text(f, color = if (selected) Color.White else palette.onSurface, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
+                Spacer(Modifier.height(10.dp))
             }
-            
-            Spacer(Modifier.height(10.dp))
             
             val filteredTasks = tasks.filter { 
                 when(filterMode) {
@@ -373,24 +394,37 @@ fun DownloadScreen(onOpenBrowserUrl: (String) -> Unit) {
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(filteredTasks, key = { it.id }) { task ->
-                        DownloadCard(
-                            task = task, 
-                            onPause = { DownloadManager.pause(ctx, task.id) }, 
-                            onResume = { DownloadManager.start(ctx, task.id) }, 
-                            onDelete = { DownloadManager.remove(ctx, task.id) },
-                            onOpen = { }
-                        )
+                        if (isSelectionMode) {
+                            Row(Modifier.fillMaxWidth().clickable {
+                                if (selectedTasks.contains(task.id)) selectedTasks.remove(task.id) else selectedTasks.add(task.id)
+                            }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = selectedTasks.contains(task.id), onCheckedChange = { 
+                                    if (it) selectedTasks.add(task.id) else selectedTasks.remove(task.id) 
+                                })
+                                DownloadCard(task = task, onPause = {}, onResume = {}, onDelete = {}, onOpen = {})
+                            }
+                        } else {
+                            DownloadCard(
+                                task = task, 
+                                onPause = { DownloadManager.pause(ctx, task.id) }, 
+                                onResume = { DownloadManager.start(ctx, task.id) }, 
+                                onDelete = { DownloadManager.remove(ctx, task.id) },
+                                onOpen = { }
+                            )
+                        }
                     }
                 }
             }
         }
 
-        FloatingActionButton(
-            onClick = { showAddDialog = true; prefillUrl = "" },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-            containerColor = palette.primary.first(),
-            shape = CircleShape
-        ) { Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White) }
+        if (!isSelectionMode) {
+            FloatingActionButton(
+                onClick = { showAddDialog = true; prefillUrl = "" },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                containerColor = palette.primary.first(),
+                shape = CircleShape
+            ) { Text("+", style = MaterialTheme.typography.headlineMedium, color = Color.White) }
+        }
     }
 
     if (showAddDialog) {

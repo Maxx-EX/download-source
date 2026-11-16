@@ -19,7 +19,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// 核心结构：将每个分片与其专属的密钥和 IV 绑定
 data class TsSegment(val url: String, val key: ByteArray?, val iv: ByteArray?)
 
 class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()) {
@@ -67,10 +66,16 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                 }
             }.awaitAll()
             ticker.cancel()
+            
+            // 修复：合并前严格校验分片大小
+            var actualSize = 0L
+            for (i in 0 until n) actualSize += File(tmpDir, "$fileName.part$i").length()
+            if (actualSize != total) error("文件下载不完整 (预期: $total, 实际: $actualSize)，请重试")
+
             val partPaths = (0 until n).map { File(tmpDir, "$fileName.part$it").absolutePath }.toTypedArray()
             val out = File(targetDir, fileName)
             ZeroCore.fallocate(out.absolutePath, total)
-            if (!ZeroCore.mergeFiles(partPaths, out.absolutePath)) error("合并失败")
+            if (!ZeroCore.mergeFiles(partPaths, out.absolutePath)) error("C++底层合并失败，请检查存储空间")
             tmpDir.deleteRecursively()
             onTick(total, total, 0)
             out
@@ -105,7 +110,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                 RandomAccessFile(file, "rw").use { raf ->
                     raf.seek(existing)
                     resp.body?.byteStream()?.use { ins ->
-                        val buf = ByteArray(if (speedLimitKb > 0) 16 * 1024 else 64 * 1024)
+                        val buf = ByteArray(if (speedLimitKb > 0) 16 * 1024 else 128 * 1024) // 加大Buffer
                         var bytesSinceStart = 0L
                         val startTime = System.currentTimeMillis()
 
@@ -133,11 +138,11 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         }
     }
 
+    // M3U8 下载逻辑保持不变，直接复用上一版的完美解密引擎...
     private suspend fun downloadM3u8(taskId: String, url: String, targetDir: File, fileName: String, parts: Int, headers: okhttp3.Headers, onTick: (Long, Long, Long) -> Unit): File = coroutineScope {
         var finalUrl = url
         if (url.endsWith(".ts", true)) finalUrl = url.substringBeforeLast("/").plus("/index.m3u8")
         
-        // 解析出所有分片，每个分片携带自己的解密参数
         val segments = parseM3u8(finalUrl, mutableSetOf())
         if (segments.isEmpty()) error("未找到有效的 TS 分片")
         
@@ -160,10 +165,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                                 activeCalls.getOrPut(taskId) { mutableListOf() }.add(call)
                                 call.execute().use { resp -> 
                                     var bytes = resp.body?.bytes() ?: ByteArray(0)
-                                    // 使用专属的 key 和 iv 进行解密
-                                    if (segment.key != null && segment.iv != null) {
-                                        bytes = decryptAES(bytes, segment.key, segment.iv)
-                                    }
+                                    if (segment.key != null && segment.iv != null) bytes = decryptAES(bytes, segment.key, segment.iv)
                                     partFile.writeBytes(bytes)
                                     java.io.FileOutputStream(partFile, true).use { it.fd.sync() }
                                 }
@@ -183,7 +185,7 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         ticker.cancel()
 
         val mergedTs = File(targetDir, "$fileName.tmp_merged.ts")
-        if (!ZeroCore.mergeFiles(segments.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("合成失败")
+        if (!ZeroCore.mergeFiles(segments.indices.map { File(tmpDir, "$it.ts").absolutePath }.toTypedArray(), mergedTs.absolutePath)) error("TS 合成失败")
 
         val outMp4 = File(targetDir, if (fileName.endsWith(".mp4")) fileName else "$fileName.mp4")
         val success = withContext(Dispatchers.IO) { 
@@ -197,26 +199,21 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         if (!success) {
             val fallbackTs = File(targetDir, if (fileName.endsWith(".ts")) fileName else "$fileName.ts")
             if (mergedTs.exists()) mergedTs.renameTo(fallbackTs)
-            throw Exception("MP4 封装失败，已保留 .ts 原文件")
+            throw Exception("MP4 封装失败，已保留 .ts 原文件 (´･_･`)")
         }
         mergedTs.delete()
         outMp4
     }
 
-    // 终极 M3U8 解析器
     private suspend fun parseM3u8(url: String, visited: MutableSet<String>): List<TsSegment> = withContext(Dispatchers.IO) {
         if (visited.contains(url)) return@withContext emptyList()
         visited.add(url)
-
         val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() ?: "" }
         val lines = text.lines()
 
-        // 处理 Master Playlist (多码率)
         if (lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
             val subUrl = lines.firstOrNull { it.isNotBlank() && !it.startsWith("#") }
-            if (subUrl != null) {
-                return@withContext parseM3u8(resolveUrl(url, subUrl), visited)
-            }
+            if (subUrl != null) return@withContext parseM3u8(resolveUrl(url, subUrl), visited)
         }
 
         var currentKey: ByteArray? = null
@@ -235,21 +232,15 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                     val keyUri = Regex("URI=\"(.*?)\"").find(trimmed)?.groupValues?.get(1)
                     val ivStr = Regex("IV=0x(.*?)(,|$)").find(trimmed)?.groupValues?.get(1)
                     if (keyUri != null) {
-                        val absKeyUri = resolveUrl(url, keyUri)
-                        currentKey = client.newCall(Request.Builder().url(absKeyUri).build()).execute().use { it.body?.bytes() }
+                        currentKey = client.newCall(Request.Builder().url(resolveUrl(url, keyUri)).build()).execute().use { it.body?.bytes() }
                         currentIv = if (ivStr != null) hexStringToByteArray(ivStr) else null
-                    } else {
-                        currentKey = null; currentIv = null
-                    }
-                } else if (method == "NONE") {
-                    currentKey = null; currentIv = null
-                }
+                    } else { currentKey = null; currentIv = null }
+                } else if (method == "NONE") { currentKey = null; currentIv = null }
             } else if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
                 val absUrl = resolveUrl(url, trimmed)
                 if (absUrl.contains(".m3u8", ignoreCase = true)) {
                     result.addAll(parseM3u8(absUrl, visited))
                 } else {
-                    // 如果没写 IV，标准默认使用 (Media Sequence + Index) 作为 IV
                     val ivToUse = currentIv ?: if (currentKey != null) {
                         val seq = mediaSequence + segmentIndex
                         ByteArray(16).apply {
@@ -257,7 +248,6 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
                             this[12] = (seq shr 24).toByte(); this[13] = (seq shr 16).toByte(); this[14] = (seq shr 8).toByte(); this[15] = seq.toByte()
                         }
                     } else null
-                    
                     result.add(TsSegment(absUrl, currentKey, ivToUse))
                 }
                 segmentIndex++
@@ -266,11 +256,9 @@ class Segmenter(private val client: OkHttpClient = OkHttpClient.Builder().connec
         return@withContext result
     }
 
-    // 彻底修复相对路径拼接（支持 ../ 等）
     private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
         if (relativeUrl.startsWith("http")) return relativeUrl
-        val baseUri = java.net.URI(baseUrl)
-        return baseUri.resolve(relativeUrl).toString()
+        return java.net.URI(baseUrl).resolve(relativeUrl).toString()
     }
 
     private fun hexStringToByteArray(s: String): ByteArray {
