@@ -29,10 +29,7 @@ interface TaskDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTasks(tasks: List<TaskEntity>)
 
-    @Query("DELETE FROM download_tasks WHERE id = :id")
-    suspend fun deleteTask(id: String)
-
-    // 补全：清空全表的方法
+    // 修复：补全清空方法
     @Query("DELETE FROM download_tasks")
     suspend fun clearAll()
 }

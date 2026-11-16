@@ -177,7 +177,10 @@ object DownloadManager {
     }
     
     fun remove(context: Context, id: String) { 
-        segmenter.cancelTask(id); jobs[id]?.cancel(); jobs.remove(id)
+        segmenter.cancelTask(id)
+        jobs[id]?.cancel()
+        jobs.remove(id)
+        // 核心修复：立即从内存移除，并同步清空数据库
         _tasks.value = _tasks.value.filterNot { it.id == id }
         TaskStore.save(context, _tasks.value) 
         checkPending(context)

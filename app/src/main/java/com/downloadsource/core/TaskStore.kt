@@ -8,10 +8,13 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 object TaskStore {
     private val gson = Gson()
+    private val dbMutex = Mutex() // 修复：并发写入锁
 
     suspend fun loadAsync(context: Context): List<DownloadTask> = withContext(Dispatchers.IO) {
         val dao = AppDatabase.getDatabase(context).taskDao()
@@ -39,9 +42,15 @@ object TaskStore {
                 status = t.status.name, error = t.error, outputPath = t.outputPath, createdAt = t.createdAt
             )
         }
-        // 修复：使用 insert 的 REPLACE 策略，不再全表删除！
+        
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-            dao.insertTasks(entities)
+            dbMutex.withLock {
+                // 修复：先清空全表，再插入最新数据，绝无幽灵任务
+                dao.clearAll()
+                if (entities.isNotEmpty()) {
+                    dao.insertTasks(entities)
+                }
+            }
         }
     }
 }
