@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.downloadsource.BuildConfig
+import com.downloadsource.storage.DirStore // 修复：补全 DirStore 导入
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +17,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 object DownloadManager {
-    // 修复：OkHttp 单域名并发限制解除，拉满到 32
+    // 极限调优：OkHttp 连接池复用、允许高并发
     val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -31,7 +32,6 @@ object DownloadManager {
     private val jobs = mutableMapOf<String, Job>()
     private val mutex = Mutex()
     
-    // 修复：全局任务并发数，默认 3，可在设置调整
     var MAX_CONCURRENT = 3 
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
@@ -108,7 +108,6 @@ object DownloadManager {
     fun start(context: Context, id: String) { scope.launch { startTask(context, id) } }
     
     private fun startTask(context: Context, id: String) {
-        // 修复：并发限制
         if (_tasks.value.count { it.status == TaskStatus.Running } >= MAX_CONCURRENT) return
         
         val t = _tasks.value.find { it.id == id } ?: return
@@ -173,7 +172,6 @@ object DownloadManager {
     fun pause(context: Context, id: String) { 
         segmenter.cancelTask(id)
         jobs[id]?.cancel(); jobs.remove(id)
-        // 立即更新状态
         updateTaskState(context, id) { it.copy(status = TaskStatus.Paused, speed = 0) }
         checkPending(context)
     }
