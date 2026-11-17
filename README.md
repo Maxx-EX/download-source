@@ -22,6 +22,12 @@ gradle :app:assembleZetaDebug :app:assembleOmegaDebug
 
 Artifacts land in app/build/outputs/apk/<flavor>/debug/.
 
+## License
+Copyright (C) 2026 Maxx-EX. Licensed under the Apache License, Version 2.0.
+
+### Derivatives
+The following projects are derivative works based on this repository:
+- [LM Downloader](https://github.com/exchangeq/download-source-lm) by exchangeq
 License
 
 Apache-2.0
